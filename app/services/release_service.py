@@ -1,0 +1,188 @@
+from __future__ import annotations
+
+from typing import Any
+
+from app.config.settings import Settings
+from app.linear.client import LinearClient
+from app.models.release import ReleaseSummary
+from app.models.ticket import TicketInfo
+from app.ocr.base import OCRProvider
+from app.parsers.image_parser import extract_tickets_from_images
+from app.parsers.ticket_parser import extract_from_messages
+from app.services.pic_service import determine_pic
+from app.slack.formatter import format_release_summary
+from app.slack.thread import ThreadData, fetch_recent_messages, fetch_thread_messages
+from app.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class ReleaseService:
+    def __init__(
+        self,
+        settings: Settings,
+        linear_client: LinearClient,
+        ocr_provider: OCRProvider,
+    ) -> None:
+        self._settings = settings
+        self._linear = linear_client
+        self._ocr = ocr_provider
+
+    async def _gather_thread_data(
+        self,
+        client: Any,
+        channel: str,
+        thread_ts: str | None,
+    ) -> ThreadData:
+        if thread_ts:
+            return await fetch_thread_messages(client, channel, thread_ts)
+        return await fetch_recent_messages(client, channel, self._settings.fallback_message_count)
+
+    async def _build_name_to_slack_id_map(self, client: Any) -> dict[str, str]:
+        """Build a mapping from display names / real names to Slack user IDs."""
+        name_map: dict[str, str] = {}
+        try:
+            cursor = None
+            while True:
+                kwargs: dict[str, Any] = {"limit": 200}
+                if cursor:
+                    kwargs["cursor"] = cursor
+                resp = await client.users_list(**kwargs)
+                for member in resp.get("members", []):
+                    if member.get("is_bot") or member.get("deleted"):
+                        continue
+                    uid = member["id"]
+                    profile = member.get("profile", {})
+                    real_name = (profile.get("real_name") or "").strip().lower()
+                    display_name = (profile.get("display_name") or "").strip().lower()
+                    first_name = (profile.get("first_name") or "").strip().lower()
+
+                    if display_name:
+                        name_map[display_name] = uid
+                    if real_name:
+                        name_map[real_name] = uid
+                    if first_name:
+                        name_map[first_name] = uid
+
+                cursor = resp.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
+        except Exception:
+            logger.exception("failed_to_fetch_slack_users")
+        return name_map
+
+    def _resolve_assignee(self, assignee_name: str | None, name_map: dict[str, str]) -> str:
+        """Convert a Linear assignee name to a Slack mention if possible."""
+        if not assignee_name:
+            return ""
+        lookup = assignee_name.strip().lower()
+        slack_id = name_map.get(lookup)
+        if not slack_id:
+            parts = lookup.split()
+            if parts:
+                slack_id = name_map.get(parts[0])
+        if slack_id:
+            return f"<@{slack_id}>"
+        return f"@{assignee_name}"
+
+    async def process_release(
+        self,
+        client: Any,
+        channel: str,
+        thread_ts: str | None,
+        user_id: str = "",
+    ) -> None:
+        """Full release flow: fetch thread -> parse -> OCR -> Linear -> format -> post."""
+        try:
+            thread_data = await self._gather_thread_data(client, channel, thread_ts)
+
+            parse_result = extract_from_messages(thread_data.texts)
+            text_ids = parse_result.ticket_ids
+            status_filter = parse_result.status_filter
+            logger.info(
+                "text_tickets_extracted",
+                count=len(text_ids),
+                tickets=sorted(text_ids),
+                status_filter=status_filter,
+                release_date=parse_result.release_date,
+                dev_eta=parse_result.dev_eta,
+                prod_eta=parse_result.prod_eta,
+            )
+
+            image_ids = await extract_tickets_from_images(
+                thread_data.files,
+                self._settings.slack_bot_token,
+                self._ocr,
+            )
+            logger.info("image_tickets_extracted", count=len(image_ids), tickets=sorted(image_ids))
+
+            all_ids = text_ids | image_ids
+            if not all_ids:
+                await client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=":warning: No Linear tickets found in this thread.",
+                )
+                return
+
+            need_state = status_filter is not None
+            logger.info("fetching_linear_issues", count=len(all_ids), include_state=need_state)
+            tickets = await self._linear.fetch_issues(all_ids, include_state=need_state)
+
+            if status_filter and tickets:
+                tickets = _filter_by_status(tickets, status_filter)
+                logger.info("status_filtered", status=status_filter, remaining=len(tickets))
+
+            if not tickets:
+                msg = ":warning: Could not fetch any ticket details from Linear."
+                if status_filter:
+                    msg = f":warning: No tickets found with status *{status_filter}*."
+                await client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=msg,
+                )
+                return
+
+            name_map = await self._build_name_to_slack_id_map(client)
+
+            for ticket in tickets:
+                ticket.assignee_display = self._resolve_assignee(ticket.assignee, name_map)
+
+            pic = determine_pic(tickets)
+            if pic.startswith("@"):
+                pic_name = pic[1:]
+                pic = self._resolve_assignee(pic_name, name_map)
+
+            summary = ReleaseSummary(
+                tickets=tickets,
+                pic=pic,
+                dev_eta=parse_result.dev_eta or "TBD",
+                prod_eta=parse_result.prod_eta or "TBD",
+                release_date_str=parse_result.release_date,
+            )
+            message = format_release_summary(summary)
+
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=message,
+            )
+            logger.info("release_posted", channel=channel, thread_ts=thread_ts, ticket_count=len(tickets))
+
+        except Exception:
+            logger.exception("release_processing_failed", channel=channel, thread_ts=thread_ts)
+            try:
+                await client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=":x: An error occurred while generating the release summary. Please try again.",
+                )
+            except Exception:
+                logger.exception("error_message_post_failed")
+
+
+def _filter_by_status(tickets: list[TicketInfo], status: str) -> list[TicketInfo]:
+    """Keep only tickets whose state matches the requested status (case-insensitive)."""
+    normalized = status.lower()
+    return [t for t in tickets if t.state and t.state.lower() == normalized]
