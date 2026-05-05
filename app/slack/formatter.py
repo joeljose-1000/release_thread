@@ -8,12 +8,9 @@ def format_release_summary(summary: ReleaseSummary) -> str:
     date_str = summary.release_date_str or summary.release_date.strftime("%B %-d")
 
     lines: list[str] = [
-        f":round_pushpin: *RELEASE {date_str}*",
-        "",
+        f":round_pushpin: *RELEASE &lt;{date_str}&gt;*",
         f"*PIC:* {summary.pic}",
-        "",
         "*Bugs and Improvements:*",
-        "",
     ]
 
     if not summary.tickets:
@@ -28,7 +25,6 @@ def format_release_summary(summary: ReleaseSummary) -> str:
             lines.append(f"{idx}. <{ticket.url}|{ticket.title}>{assignee_part}")
 
     lines.extend([
-        "",
         f"*Dev ETA :* {summary.dev_eta}",
         f"*Prod ETA :* {summary.prod_eta}",
     ])

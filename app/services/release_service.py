@@ -39,7 +39,11 @@ class ReleaseService:
         return await fetch_recent_messages(client, channel, self._settings.fallback_message_count)
 
     async def _build_name_to_slack_id_map(self, client: Any) -> dict[str, str]:
-        """Build a mapping from display names / real names to Slack user IDs."""
+        """Build a mapping from display names / real names to Slack user IDs.
+
+        Keys are lowercased. Multiple keys point to the same user ID so that
+        matching by first name, full name, or display name all work.
+        """
         name_map: dict[str, str] = {}
         try:
             cursor = None
@@ -53,36 +57,56 @@ class ReleaseService:
                         continue
                     uid = member["id"]
                     profile = member.get("profile", {})
-                    real_name = (profile.get("real_name") or "").strip().lower()
-                    display_name = (profile.get("display_name") or "").strip().lower()
-                    first_name = (profile.get("first_name") or "").strip().lower()
+                    real_name = (profile.get("real_name") or "").strip()
+                    display_name = (profile.get("display_name") or "").strip()
+                    first_name = (profile.get("first_name") or "").strip()
+                    email = (profile.get("email") or "").strip()
 
                     if display_name:
-                        name_map[display_name] = uid
+                        name_map[display_name.lower()] = uid
                     if real_name:
-                        name_map[real_name] = uid
+                        name_map[real_name.lower()] = uid
                     if first_name:
-                        name_map[first_name] = uid
+                        name_map[first_name.lower()] = uid
+                    if email:
+                        # Map the local part of the email (before @)
+                        local = email.split("@")[0].lower()
+                        name_map[local] = uid
 
                 cursor = resp.get("response_metadata", {}).get("next_cursor")
                 if not cursor:
                     break
         except Exception:
             logger.exception("failed_to_fetch_slack_users")
+
+        logger.info("slack_user_map_built", user_count=len(name_map))
         return name_map
 
     def _resolve_assignee(self, assignee_name: str | None, name_map: dict[str, str]) -> str:
-        """Convert a Linear assignee name to a Slack mention if possible."""
+        """Convert a Linear assignee name to a Slack <@U123> mention if possible."""
         if not assignee_name:
             return ""
         lookup = assignee_name.strip().lower()
+
+        # Try exact match on full name
         slack_id = name_map.get(lookup)
+
+        # Try first name only
         if not slack_id:
-            parts = lookup.split()
-            if parts:
-                slack_id = name_map.get(parts[0])
+            first = lookup.split()[0] if lookup.split() else lookup
+            slack_id = name_map.get(first)
+
+        # Try matching as substring (e.g. Linear has "sharooq" and Slack has "sharooq farzeen a k")
+        if not slack_id:
+            for key, uid in name_map.items():
+                if lookup in key or key.startswith(lookup):
+                    slack_id = uid
+                    break
+
         if slack_id:
             return f"<@{slack_id}>"
+
+        logger.warning("assignee_slack_match_failed", assignee=assignee_name)
         return f"@{assignee_name}"
 
     async def process_release(

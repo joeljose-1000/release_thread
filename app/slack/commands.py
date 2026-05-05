@@ -21,7 +21,7 @@ def register_commands(bolt_app: AsyncApp, release_service: ReleaseService) -> No
 
     @bolt_app.command("/release")
     async def handle_release(ack: Any, body: dict, client: Any, respond: Any) -> None:
-        await ack(":hourglass_flowing_sand: Processing release summary…")
+        await ack()
 
         channel_id: str = body.get("channel_id", "")
         user_id: str = body.get("user_id", "")
@@ -29,8 +29,6 @@ def register_commands(bolt_app: AsyncApp, release_service: ReleaseService) -> No
 
         cmd_text = body.get("text", "").strip()
 
-        # Try to extract a thread link from the command text
-        # e.g. /release https://company.slack.com/archives/C123/p1234567890123456
         link_match = SLACK_THREAD_LINK_PATTERN.search(cmd_text)
         if link_match:
             channel_id = link_match.group(1)
@@ -45,7 +43,8 @@ def register_commands(bolt_app: AsyncApp, release_service: ReleaseService) -> No
                 "Scanning recent channel messages for tickets.\n"
                 "To target a specific thread, either:\n"
                 "• Right-click a message in the thread → *Shortcuts* → *Generate Release Summary*\n"
-                "• Or paste a thread link: `/release <thread_link>`"
+                "• Or paste a thread link: `/release <thread_link>`",
+                response_type="ephemeral",
             )
 
         logger.info(
@@ -78,13 +77,6 @@ def register_commands(bolt_app: AsyncApp, release_service: ReleaseService) -> No
             channel=channel_id,
             user=user_id,
             thread_ts=thread_ts,
-        )
-
-        # Post an initial status message in the thread
-        await client.chat_postMessage(
-            channel=channel_id,
-            thread_ts=thread_ts,
-            text=":hourglass_flowing_sand: Generating release summary…",
         )
 
         asyncio.create_task(
