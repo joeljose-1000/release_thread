@@ -11,6 +11,11 @@ LINEAR_URL_PATTERN = re.compile(
     r"https?://linear\.app/[\w-]+/issue/([A-Z]{2,10}-\d+)",
 )
 
+PLAIN_ITEM_PATTERN = re.compile(
+    r"^(?:\d+[.)]\s*|[-*•]\s+)(.+)$",
+    re.MULTILINE,
+)
+
 STATUS_FILTER_PATTERN = re.compile(
     r"\b(?:all\s+(?:items?|tickets?|issues?)\s+(?:in|with)\s+(\w+)(?:\s+status)?)\b",
     re.IGNORECASE,
@@ -40,8 +45,16 @@ ORDINAL_SUFFIXES = {1: "st", 2: "nd", 3: "rd", 21: "st", 22: "nd", 23: "rd", 31:
 
 
 @dataclass
+class PlainItem:
+    """A release item described in plain text (no Linear ticket)."""
+    title: str
+    user_id: str = ""
+
+
+@dataclass
 class ParseResult:
     ticket_ids: set[str] = field(default_factory=set)
+    plain_items: list[PlainItem] = field(default_factory=list)
     status_filter: str | None = None
     release_date: str | None = None
     dev_eta: str | None = None
@@ -76,6 +89,19 @@ def extract_ticket_ids(text: str) -> set[str]:
 def detect_status_filter(text: str) -> str | None:
     match = STATUS_FILTER_PATTERN.search(text)
     return match.group(1).capitalize() if match else None
+
+
+def extract_plain_items(text: str) -> list[str]:
+    """Extract numbered/bulleted line items that don't reference a Linear ticket."""
+    items: list[str] = []
+    for match in PLAIN_ITEM_PATTERN.finditer(text):
+        line = match.group(1).strip()
+        if not line:
+            continue
+        if IDENTIFIER_PATTERN.search(line) or LINEAR_URL_PATTERN.search(line):
+            continue
+        items.append(line)
+    return items
 
 
 def _resolve_day_to_date(day_str: str) -> date | None:
@@ -156,8 +182,11 @@ def extract_release_metadata(first_message: str) -> dict[str, str | date | None]
     return result
 
 
-def extract_from_messages(messages: list[str]) -> ParseResult:
-    """Extract ticket identifiers, status filter, and release metadata from messages."""
+def extract_from_messages(
+    messages: list[str],
+    user_ids: list[str] | None = None,
+) -> ParseResult:
+    """Extract ticket identifiers, plain text items, status filter, and release metadata."""
     result = ParseResult()
 
     if messages:
@@ -166,8 +195,13 @@ def extract_from_messages(messages: list[str]) -> ParseResult:
         result.dev_eta = metadata.get("dev_eta")  # type: ignore[assignment]
         result.prod_eta = metadata.get("prod_eta")  # type: ignore[assignment]
 
-    for msg in messages:
+    for idx, msg in enumerate(messages):
         result.ticket_ids.update(extract_ticket_ids(msg))
         if result.status_filter is None:
             result.status_filter = detect_status_filter(msg)
+
+        sender = (user_ids[idx] if user_ids and idx < len(user_ids) else "")
+        for item_text in extract_plain_items(msg):
+            result.plain_items.append(PlainItem(title=item_text, user_id=sender))
+
     return result

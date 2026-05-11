@@ -34,3 +34,12 @@ class TestDeterminePic:
         ]
         result = determine_pic(tickets)
         assert result == "@bob"
+
+    def test_plain_items_counted_by_assignee_display(self) -> None:
+        tickets = [
+            TicketInfo(identifier="A-1", title="t", url="u", assignee="bob"),
+            TicketInfo(identifier="", title="fix cache", url="", assignee_display="<@U999>"),
+            TicketInfo(identifier="", title="fix logs", url="", assignee_display="<@U999>"),
+        ]
+        result = determine_pic(tickets)
+        assert result == "<@U999>"

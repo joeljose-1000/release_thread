@@ -16,7 +16,7 @@ class TestFormatReleaseSummary:
         )
         result = format_release_summary(summary)
 
-        assert ":round_pushpin: *RELEASE May 4*" in result
+        assert ":round_pushpin: *RELEASE &lt;May 4&gt;*" in result
         assert "*PIC:* @raj" in result
         assert "*Bugs and Improvements:*" in result
         assert (
@@ -63,3 +63,15 @@ class TestFormatReleaseSummary:
         assert "1. <" in result
         assert "2. <" in result
         assert "3. <" in result
+
+    def test_plain_text_item_no_url(self) -> None:
+        summary = ReleaseSummary(
+            tickets=[
+                TicketInfo(identifier="ENG-1", title="Fix crash", url="https://example.com", assignee="raj"),
+                TicketInfo(identifier="", title="fix for admin whitelist", url="", assignee_display="<@U123>"),
+            ],
+            pic="@raj",
+        )
+        result = format_release_summary(summary)
+        assert "1. <https://example.com|Fix crash> - @raj" in result
+        assert "2. fix for admin whitelist - <@U123>" in result

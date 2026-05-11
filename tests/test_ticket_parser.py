@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.parsers.ticket_parser import (
     detect_status_filter,
     extract_from_messages,
+    extract_plain_items,
     extract_ticket_ids,
 )
 
@@ -72,6 +73,49 @@ class TestDetectStatusFilter:
         assert detect_status_filter("ALL ITEMS IN REVIEW") == "Review"
 
 
+class TestExtractPlainItems:
+    def test_numbered_items(self) -> None:
+        text = "1.fix for admin whitelist\n2.ats sync logs\n3.package upgrades"
+        result = extract_plain_items(text)
+        assert result == ["fix for admin whitelist", "ats sync logs", "package upgrades"]
+
+    def test_numbered_with_linear_url_excluded(self) -> None:
+        text = (
+            "1.fix for admin whitelist\n"
+            "2.https://linear.app/co/issue/WHA-2455/my-tasks-page-update"
+        )
+        result = extract_plain_items(text)
+        assert result == ["fix for admin whitelist"]
+
+    def test_numbered_with_identifier_excluded(self) -> None:
+        text = "1.fix for admin whitelist\n2.ENG-123 fix login"
+        result = extract_plain_items(text)
+        assert result == ["fix for admin whitelist"]
+
+    def test_bullet_dash_items(self) -> None:
+        text = "- fix caching\n- improve logging"
+        result = extract_plain_items(text)
+        assert result == ["fix caching", "improve logging"]
+
+    def test_no_items_in_plain_text(self) -> None:
+        text = "Please add your release items for Thursday."
+        result = extract_plain_items(text)
+        assert result == []
+
+    def test_mixed_numbered_and_link(self) -> None:
+        text = (
+            "1.fix for admin whitelist\n"
+            "2.ats sync logs\n"
+            "3.package upgrades\n"
+            "4.https://linear.app/what-the-ai/issue/WHA-2455/my-tasks-page-update"
+        )
+        result = extract_plain_items(text)
+        assert len(result) == 3
+        assert "fix for admin whitelist" in result
+        assert "ats sync logs" in result
+        assert "package upgrades" in result
+
+
 class TestExtractFromMessages:
     def test_multiple_messages(self) -> None:
         messages = [
@@ -96,3 +140,16 @@ class TestExtractFromMessages:
         result = extract_from_messages(messages)
         assert result.ticket_ids == {"ENG-10", "ENG-20"}
         assert result.status_filter == "Review"
+
+    def test_plain_items_with_user_ids(self) -> None:
+        messages = [
+            "1.fix for admin whitelist\n2.ats sync logs",
+            "https://linear.app/co/issue/WHA-100/some-task",
+        ]
+        user_ids = ["U_ALICE", "U_BOB"]
+        result = extract_from_messages(messages, user_ids=user_ids)
+        assert "WHA-100" in result.ticket_ids
+        assert len(result.plain_items) == 2
+        assert result.plain_items[0].title == "fix for admin whitelist"
+        assert result.plain_items[0].user_id == "U_ALICE"
+        assert result.plain_items[1].user_id == "U_ALICE"

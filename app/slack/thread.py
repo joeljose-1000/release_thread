@@ -9,9 +9,19 @@ logger = get_logger(__name__)
 
 
 @dataclass
+class MessageInfo:
+    text: str
+    user_id: str = ""
+
+
+@dataclass
 class ThreadData:
-    texts: list[str] = field(default_factory=list)
+    messages: list[MessageInfo] = field(default_factory=list)
     files: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def texts(self) -> list[str]:
+        return [m.text for m in self.messages]
 
 
 async def fetch_thread_messages(
@@ -38,7 +48,7 @@ async def fetch_thread_messages(
         for msg in messages:
             text = msg.get("text", "")
             if text:
-                data.texts.append(text)
+                data.messages.append(MessageInfo(text=text, user_id=msg.get("user", "")))
 
             msg_files = msg.get("files", [])
             data.files.extend(msg_files)
@@ -65,7 +75,7 @@ async def fetch_recent_messages(
     for msg in response.get("messages", []):
         text = msg.get("text", "")
         if text:
-            data.texts.append(text)
+            data.messages.append(MessageInfo(text=text, user_id=msg.get("user", "")))
         data.files.extend(msg.get("files", []))
 
     logger.info("recent_messages_fetched", channel=channel, messages=len(data.texts), files=len(data.files))

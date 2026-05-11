@@ -8,7 +8,7 @@ from app.models.release import ReleaseSummary
 from app.models.ticket import TicketInfo
 from app.ocr.base import OCRProvider
 from app.parsers.image_parser import extract_tickets_from_images
-from app.parsers.ticket_parser import extract_from_messages
+from app.parsers.ticket_parser import PlainItem, extract_from_messages
 from app.services.pic_service import determine_pic
 from app.slack.formatter import format_release_summary
 from app.slack.thread import ThreadData, fetch_recent_messages, fetch_thread_messages
@@ -120,13 +120,15 @@ class ReleaseService:
         try:
             thread_data = await self._gather_thread_data(client, channel, thread_ts)
 
-            parse_result = extract_from_messages(thread_data.texts)
+            user_ids = [m.user_id for m in thread_data.messages]
+            parse_result = extract_from_messages(thread_data.texts, user_ids=user_ids)
             text_ids = parse_result.ticket_ids
             status_filter = parse_result.status_filter
             logger.info(
                 "text_tickets_extracted",
                 count=len(text_ids),
                 tickets=sorted(text_ids),
+                plain_items=len(parse_result.plain_items),
                 status_filter=status_filter,
                 release_date=parse_result.release_date,
                 dev_eta=parse_result.dev_eta,
@@ -141,45 +143,42 @@ class ReleaseService:
             logger.info("image_tickets_extracted", count=len(image_ids), tickets=sorted(image_ids))
 
             all_ids = text_ids | image_ids
-            if not all_ids:
-                await client.chat_postMessage(
-                    channel=channel,
-                    thread_ts=thread_ts,
-                    text=":warning: No Linear tickets found in this thread.",
-                )
-                return
 
             need_state = status_filter is not None
-            logger.info("fetching_linear_issues", count=len(all_ids), include_state=need_state)
-            tickets = await self._linear.fetch_issues(all_ids, include_state=need_state)
+            tickets: list[TicketInfo] = []
+            if all_ids:
+                logger.info("fetching_linear_issues", count=len(all_ids), include_state=need_state)
+                tickets = await self._linear.fetch_issues(all_ids, include_state=need_state)
 
-            if status_filter and tickets:
-                tickets = _filter_by_status(tickets, status_filter)
-                logger.info("status_filtered", status=status_filter, remaining=len(tickets))
+                if status_filter and tickets:
+                    tickets = _filter_by_status(tickets, status_filter)
+                    logger.info("status_filtered", status=status_filter, remaining=len(tickets))
 
-            if not tickets:
-                msg = ":warning: Could not fetch any ticket details from Linear."
-                if status_filter:
-                    msg = f":warning: No tickets found with status *{status_filter}*."
+            plain_tickets = _build_plain_tickets(parse_result.plain_items)
+            all_tickets = tickets + plain_tickets
+
+            if not all_tickets:
                 await client.chat_postMessage(
                     channel=channel,
                     thread_ts=thread_ts,
-                    text=msg,
+                    text=":warning: No release items found in this thread.",
                 )
                 return
 
             name_map = await self._build_name_to_slack_id_map(client)
 
-            for ticket in tickets:
+            for ticket in all_tickets:
+                if ticket.assignee_display and ticket.assignee_display.startswith("<@"):
+                    continue
                 ticket.assignee_display = self._resolve_assignee(ticket.assignee, name_map)
 
-            pic = determine_pic(tickets)
+            pic = determine_pic(all_tickets)
             if pic.startswith("@"):
                 pic_name = pic[1:]
                 pic = self._resolve_assignee(pic_name, name_map)
 
             summary = ReleaseSummary(
-                tickets=tickets,
+                tickets=all_tickets,
                 pic=pic,
                 dev_eta=parse_result.dev_eta or "TBD",
                 prod_eta=parse_result.prod_eta or "TBD",
@@ -192,7 +191,7 @@ class ReleaseService:
                 thread_ts=thread_ts,
                 text=message,
             )
-            logger.info("release_posted", channel=channel, thread_ts=thread_ts, ticket_count=len(tickets))
+            logger.info("release_posted", channel=channel, thread_ts=thread_ts, ticket_count=len(all_tickets))
 
         except Exception:
             logger.exception("release_processing_failed", channel=channel, thread_ts=thread_ts)
@@ -204,6 +203,26 @@ class ReleaseService:
                 )
             except Exception:
                 logger.exception("error_message_post_failed")
+
+
+def _build_plain_tickets(plain_items: list[PlainItem]) -> list[TicketInfo]:
+    """Convert plain text release items into TicketInfo with the sender as assignee."""
+    seen_titles: set[str] = set()
+    tickets: list[TicketInfo] = []
+    for item in plain_items:
+        key = item.title.lower().strip()
+        if key in seen_titles:
+            continue
+        seen_titles.add(key)
+        tickets.append(
+            TicketInfo(
+                identifier="",
+                title=item.title,
+                url="",
+                assignee_display=f"<@{item.user_id}>" if item.user_id else "",
+            )
+        )
+    return tickets
 
 
 def _filter_by_status(tickets: list[TicketInfo], status: str) -> list[TicketInfo]:

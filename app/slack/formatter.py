@@ -22,7 +22,10 @@ def format_release_summary(summary: ReleaseSummary) -> str:
                 assignee_part = f" - {ticket.assignee_display}"
             elif ticket.assignee:
                 assignee_part = f" - @{ticket.assignee}"
-            lines.append(f"{idx}. <{ticket.url}|{ticket.title}>{assignee_part}")
+            if ticket.url:
+                lines.append(f"{idx}. <{ticket.url}|{ticket.title}>{assignee_part}")
+            else:
+                lines.append(f"{idx}. {ticket.title}{assignee_part}")
 
     lines.extend([
         f"*Dev ETA :* {summary.dev_eta}",

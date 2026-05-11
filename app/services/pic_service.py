@@ -17,6 +17,8 @@ def determine_pic(tickets: list[TicketInfo]) -> str:
     for ticket in tickets:
         if ticket.assignee:
             counter[ticket.assignee] += 1
+        elif ticket.assignee_display:
+            counter[ticket.assignee_display] += 1
 
     if not counter:
         return "TBD"
@@ -25,5 +27,11 @@ def determine_pic(tickets: list[TicketInfo]) -> str:
     top_assignees = sorted(name for name, count in counter.items() if count == max_count)
 
     if len(top_assignees) == 1:
-        return f"@{top_assignees[0]}"
-    return ", ".join(f"@{name}" for name in top_assignees)
+        name = top_assignees[0]
+        if name.startswith("<@"):
+            return name
+        return f"@{name}"
+    return ", ".join(
+        name if name.startswith("<@") else f"@{name}"
+        for name in top_assignees
+    )
