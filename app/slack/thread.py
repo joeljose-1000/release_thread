@@ -46,6 +46,9 @@ async def fetch_thread_messages(
         messages = response.get("messages", [])
 
         for msg in messages:
+            if _is_bot_message(msg):
+                continue
+
             text = msg.get("text", "")
             if text:
                 data.messages.append(MessageInfo(text=text, user_id=msg.get("user", "")))
@@ -73,6 +76,8 @@ async def fetch_recent_messages(
     response = await client.conversations_history(channel=channel, limit=count)
 
     for msg in response.get("messages", []):
+        if _is_bot_message(msg):
+            continue
         text = msg.get("text", "")
         if text:
             data.messages.append(MessageInfo(text=text, user_id=msg.get("user", "")))
@@ -80,3 +85,12 @@ async def fetch_recent_messages(
 
     logger.info("recent_messages_fetched", channel=channel, messages=len(data.texts), files=len(data.files))
     return data
+
+
+def _is_bot_message(msg: dict[str, Any]) -> bool:
+    """Return True if the message was posted by a bot (e.g. the release bot itself)."""
+    if msg.get("bot_id"):
+        return True
+    if msg.get("subtype") == "bot_message":
+        return True
+    return False

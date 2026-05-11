@@ -10,7 +10,7 @@ from app.ocr.base import OCRProvider
 from app.parsers.image_parser import extract_tickets_from_images
 from app.parsers.ticket_parser import PlainItem, extract_from_messages
 from app.services.pic_service import determine_pic
-from app.slack.formatter import format_release_summary
+from app.slack.formatter import format_release_blocks, format_release_summary
 from app.slack.thread import ThreadData, fetch_recent_messages, fetch_thread_messages
 from app.utils.logging import get_logger
 
@@ -184,12 +184,14 @@ class ReleaseService:
                 prod_eta=parse_result.prod_eta or "TBD",
                 release_date_str=parse_result.release_date,
             )
-            message = format_release_summary(summary)
+            blocks = format_release_blocks(summary)
+            fallback_text = format_release_summary(summary)
 
             await client.chat_postMessage(
                 channel=channel,
                 thread_ts=thread_ts,
-                text=message,
+                text=fallback_text,
+                blocks=blocks,
             )
             logger.info("release_posted", channel=channel, thread_ts=thread_ts, ticket_count=len(all_tickets))
 
