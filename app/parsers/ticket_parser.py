@@ -21,6 +21,11 @@ STATUS_FILTER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+REMOVAL_LINE_PATTERN = re.compile(
+    r"\b(?:remove|drop|take\s+out|delete|exclude)\s+(.+)",
+    re.IGNORECASE,
+)
+
 DEV_ETA_PATTERN = re.compile(r"dev\s+eta\b.{0,60}", re.IGNORECASE)
 PROD_ETA_PATTERN = re.compile(r"prod(?:uction)?\s+eta\b.{0,60}", re.IGNORECASE)
 
@@ -205,3 +210,67 @@ def extract_from_messages(
             result.plain_items.append(PlainItem(title=item_text, user_id=sender))
 
     return result
+
+
+@dataclass
+class UpdateAction:
+    """Parsed add/remove actions from a single real-time thread message."""
+
+    add_ticket_ids: set[str] = field(default_factory=set)
+    remove_ticket_ids: set[str] = field(default_factory=set)
+    add_plain_items: list[PlainItem] = field(default_factory=list)
+    remove_texts: list[str] = field(default_factory=list)
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(
+            self.add_ticket_ids
+            or self.remove_ticket_ids
+            or self.add_plain_items
+            or self.remove_texts
+        )
+
+
+def parse_update_message(text: str, user_id: str = "") -> UpdateAction:
+    """Parse a single thread message for release item additions and removals.
+
+    Per-line analysis:
+      - Lines with removal keywords (remove/drop/delete/exclude/take out)
+        treat contained ticket IDs as removals; if no IDs are found, the
+        remaining text is treated as a plain-item removal query.
+      - All other lines: ticket IDs are additions, and bulleted/numbered
+        items are added as plain release items.
+    """
+    action = UpdateAction()
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+
+        removal_match = REMOVAL_LINE_PATTERN.search(line)
+        if removal_match:
+            rest = removal_match.group(1).strip()
+            ids = extract_ticket_ids(rest)
+            action.remove_ticket_ids.update(ids)
+            if not ids:
+                cleaned = re.sub(
+                    r"\s+(?:from|in)\s+(?:the\s+)?release\.?\s*$",
+                    "",
+                    rest,
+                    flags=re.IGNORECASE,
+                ).strip().rstrip(".")
+                if cleaned:
+                    action.remove_texts.append(cleaned)
+            continue
+
+        ids = extract_ticket_ids(line)
+        action.add_ticket_ids.update(ids)
+
+        if not ids:
+            for item_text in extract_plain_items(line):
+                action.add_plain_items.append(
+                    PlainItem(title=item_text, user_id=user_id)
+                )
+
+    return action

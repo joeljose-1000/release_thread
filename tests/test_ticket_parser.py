@@ -5,6 +5,7 @@ from app.parsers.ticket_parser import (
     extract_from_messages,
     extract_plain_items,
     extract_ticket_ids,
+    parse_update_message,
 )
 
 
@@ -153,3 +154,80 @@ class TestExtractFromMessages:
         assert result.plain_items[0].title == "fix for admin whitelist"
         assert result.plain_items[0].user_id == "U_ALICE"
         assert result.plain_items[1].user_id == "U_ALICE"
+
+
+class TestParseUpdateMessage:
+    def test_add_ticket_ids(self) -> None:
+        action = parse_update_message("ENG-123 and PLAT-456")
+        assert action.add_ticket_ids == {"ENG-123", "PLAT-456"}
+        assert action.remove_ticket_ids == set()
+
+    def test_add_ticket_from_url(self) -> None:
+        action = parse_update_message(
+            "https://linear.app/team/issue/ENG-789/fix-something"
+        )
+        assert "ENG-789" in action.add_ticket_ids
+
+    def test_remove_ticket_ids(self) -> None:
+        action = parse_update_message("remove ENG-123")
+        assert action.remove_ticket_ids == {"ENG-123"}
+        assert action.add_ticket_ids == set()
+
+    def test_remove_multiple_tickets(self) -> None:
+        action = parse_update_message("drop ENG-123 and ENG-456")
+        assert action.remove_ticket_ids == {"ENG-123", "ENG-456"}
+
+    def test_remove_plain_text(self) -> None:
+        action = parse_update_message("remove fix login page")
+        assert action.remove_texts == ["fix login page"]
+        assert action.remove_ticket_ids == set()
+
+    def test_remove_plain_text_strips_trailing(self) -> None:
+        action = parse_update_message("remove fix login page from the release.")
+        assert action.remove_texts == ["fix login page"]
+
+    def test_remove_keywords_case_insensitive(self) -> None:
+        action = parse_update_message("REMOVE ENG-100")
+        assert action.remove_ticket_ids == {"ENG-100"}
+
+    def test_delete_keyword(self) -> None:
+        action = parse_update_message("delete ENG-200")
+        assert action.remove_ticket_ids == {"ENG-200"}
+
+    def test_exclude_keyword(self) -> None:
+        action = parse_update_message("exclude ENG-300")
+        assert action.remove_ticket_ids == {"ENG-300"}
+
+    def test_take_out_keyword(self) -> None:
+        action = parse_update_message("take out ENG-400")
+        assert action.remove_ticket_ids == {"ENG-400"}
+
+    def test_add_plain_item_bulleted(self) -> None:
+        action = parse_update_message("- Fix caching layer", user_id="U_ALICE")
+        assert len(action.add_plain_items) == 1
+        assert action.add_plain_items[0].title == "Fix caching layer"
+        assert action.add_plain_items[0].user_id == "U_ALICE"
+
+    def test_add_plain_item_numbered(self) -> None:
+        action = parse_update_message("1. Fix caching layer", user_id="U_BOB")
+        assert len(action.add_plain_items) == 1
+        assert action.add_plain_items[0].title == "Fix caching layer"
+
+    def test_mixed_lines_add_and_remove(self) -> None:
+        text = "remove ENG-123\nENG-456"
+        action = parse_update_message(text)
+        assert action.remove_ticket_ids == {"ENG-123"}
+        assert action.add_ticket_ids == {"ENG-456"}
+
+    def test_no_changes(self) -> None:
+        action = parse_update_message("just a regular conversation message")
+        assert not action.has_changes
+
+    def test_empty_text(self) -> None:
+        action = parse_update_message("")
+        assert not action.has_changes
+
+    def test_drop_plain_text(self) -> None:
+        action = parse_update_message("drop the admin whitelist fix")
+        assert action.remove_texts == ["the admin whitelist fix"]
+        assert action.add_ticket_ids == set()

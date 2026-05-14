@@ -17,7 +17,7 @@ SLACK_THREAD_LINK_PATTERN = re.compile(
 
 
 def register_commands(bolt_app: AsyncApp, release_service: ReleaseService) -> None:
-    """Register slash commands and message shortcuts on the Bolt app."""
+    """Register slash commands, shortcuts, and event listeners on the Bolt app."""
 
     @bolt_app.command("/release")
     async def handle_release(ack: Any, body: dict, client: Any, respond: Any) -> None:
@@ -82,6 +82,64 @@ def register_commands(bolt_app: AsyncApp, release_service: ReleaseService) -> No
         asyncio.create_task(
             release_service.process_release(client, channel_id, thread_ts, user_id)
         )
+
+    @bolt_app.event("message")
+    async def handle_message_event(event: dict, client: Any) -> None:
+        """Listen for new messages in threads with an active release summary."""
+        thread_ts = event.get("thread_ts")
+        if not thread_ts:
+            return
+
+        if event.get("subtype") or event.get("bot_id"):
+            return
+
+        channel = event.get("channel", "")
+        text = event.get("text", "")
+        user_id = event.get("user", "")
+        event_ts = event.get("ts", "")
+
+        if not text or not channel:
+            return
+
+        if not release_service.has_active_release(channel, thread_ts):
+            return
+
+        logger.info(
+            "release_thread_message",
+            channel=channel,
+            thread_ts=thread_ts,
+            user=user_id,
+        )
+
+        asyncio.create_task(
+            _process_thread_update(
+                release_service, client, channel, thread_ts, text, user_id, event_ts
+            )
+        )
+
+
+async def _process_thread_update(
+    release_service: ReleaseService,
+    client: Any,
+    channel: str,
+    thread_ts: str,
+    text: str,
+    user_id: str,
+    event_ts: str,
+) -> None:
+    """Apply a thread message to the live release and react on success."""
+    updated = await release_service.handle_thread_message(
+        client, channel, thread_ts, text, user_id
+    )
+    if updated and event_ts:
+        try:
+            await client.reactions_add(
+                channel=channel,
+                timestamp=event_ts,
+                name="white_check_mark",
+            )
+        except Exception:
+            logger.debug("reaction_add_failed", channel=channel, ts=event_ts)
 
 
 def _looks_like_ts(text: str) -> bool:

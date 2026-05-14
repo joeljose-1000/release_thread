@@ -8,8 +8,9 @@ from app.models.release import ReleaseSummary
 from app.models.ticket import TicketInfo
 from app.ocr.base import OCRProvider
 from app.parsers.image_parser import extract_tickets_from_images
-from app.parsers.ticket_parser import PlainItem, extract_from_messages
+from app.parsers.ticket_parser import PlainItem, extract_from_messages, parse_update_message
 from app.services.pic_service import determine_pic
+from app.services.release_state import ReleaseState, ReleaseStateStore
 from app.slack.formatter import format_release_blocks, format_release_summary
 from app.slack.thread import ThreadData, fetch_recent_messages, fetch_thread_messages
 from app.utils.logging import get_logger
@@ -27,6 +28,10 @@ class ReleaseService:
         self._settings = settings
         self._linear = linear_client
         self._ocr = ocr_provider
+        self._state_store = ReleaseStateStore()
+
+    def has_active_release(self, channel: str, thread_ts: str) -> bool:
+        return self._state_store.has(channel, thread_ts)
 
     async def _gather_thread_data(
         self,
@@ -187,13 +192,29 @@ class ReleaseService:
             blocks = format_release_blocks(summary)
             fallback_text = format_release_summary(summary)
 
-            await client.chat_postMessage(
+            response = await client.chat_postMessage(
                 channel=channel,
                 thread_ts=thread_ts,
                 text=fallback_text,
                 blocks=blocks,
             )
             logger.info("release_posted", channel=channel, thread_ts=thread_ts, ticket_count=len(all_tickets))
+
+            if thread_ts:
+                message_ts = response.get("ts", "")
+                if message_ts:
+                    state = ReleaseState(
+                        channel=channel,
+                        thread_ts=thread_ts,
+                        message_ts=message_ts,
+                        tickets=list(all_tickets),
+                        summary=summary,
+                        name_map=name_map,
+                        ticket_ids={t.identifier for t in all_tickets if t.identifier},
+                        plain_titles={t.title.lower().strip() for t in all_tickets if not t.identifier},
+                    )
+                    self._state_store.put(state)
+                    logger.info("release_state_stored", channel=channel, thread_ts=thread_ts)
 
         except Exception:
             logger.exception("release_processing_failed", channel=channel, thread_ts=thread_ts)
@@ -205,6 +226,144 @@ class ReleaseService:
                 )
             except Exception:
                 logger.exception("error_message_post_failed")
+
+    async def handle_thread_message(
+        self,
+        client: Any,
+        channel: str,
+        thread_ts: str,
+        text: str,
+        user_id: str,
+    ) -> bool:
+        """Process a new message in a monitored release thread.
+
+        Returns True if the release summary was updated.
+        """
+        state = self._state_store.get(channel, thread_ts)
+        if not state:
+            return False
+
+        action = parse_update_message(text, user_id)
+        if not action.has_changes:
+            return False
+
+        async with state.lock:
+            changed = False
+
+            if action.remove_ticket_ids:
+                before = len(state.tickets)
+                state.tickets = [
+                    t for t in state.tickets
+                    if t.identifier not in action.remove_ticket_ids
+                ]
+                state.ticket_ids -= action.remove_ticket_ids
+                if len(state.tickets) != before:
+                    changed = True
+                    logger.info(
+                        "tickets_removed",
+                        ids=sorted(action.remove_ticket_ids),
+                        channel=channel,
+                        thread_ts=thread_ts,
+                    )
+
+            if action.remove_texts:
+                for remove_text in action.remove_texts:
+                    before = len(state.tickets)
+                    state.tickets, removed_titles = _remove_plain_by_text(
+                        state.tickets, remove_text
+                    )
+                    state.plain_titles -= removed_titles
+                    if len(state.tickets) != before:
+                        changed = True
+                        logger.info(
+                            "plain_items_removed",
+                            query=remove_text,
+                            channel=channel,
+                            thread_ts=thread_ts,
+                        )
+
+            new_linear_ids = action.add_ticket_ids - state.ticket_ids
+            if new_linear_ids:
+                try:
+                    new_tickets = await self._linear.fetch_issues(
+                        new_linear_ids, include_state=False
+                    )
+                    for ticket in new_tickets:
+                        ticket.assignee_display = self._resolve_assignee(
+                            ticket.assignee, state.name_map
+                        )
+                        state.tickets.append(ticket)
+                        state.ticket_ids.add(ticket.identifier)
+                    if new_tickets:
+                        changed = True
+                        logger.info(
+                            "tickets_added",
+                            ids=sorted(new_linear_ids),
+                            channel=channel,
+                            thread_ts=thread_ts,
+                        )
+                except Exception:
+                    logger.exception("failed_to_fetch_new_tickets", ids=sorted(new_linear_ids))
+
+            new_plain = [
+                item
+                for item in action.add_plain_items
+                if item.title.lower().strip() not in state.plain_titles
+            ]
+            if new_plain:
+                for item in new_plain:
+                    state.plain_titles.add(item.title.lower().strip())
+                    state.tickets.append(
+                        TicketInfo(
+                            identifier="",
+                            title=item.title,
+                            url="",
+                            assignee_display=f"<@{item.user_id}>" if item.user_id else "",
+                        )
+                    )
+                changed = True
+                logger.info(
+                    "plain_items_added",
+                    count=len(new_plain),
+                    channel=channel,
+                    thread_ts=thread_ts,
+                )
+
+            if not changed:
+                return False
+
+            pic = determine_pic(state.tickets)
+            if pic.startswith("@"):
+                pic = self._resolve_assignee(pic[1:], state.name_map)
+
+            state.summary = ReleaseSummary(
+                tickets=state.tickets,
+                pic=pic,
+                dev_eta=state.summary.dev_eta,
+                prod_eta=state.summary.prod_eta,
+                release_date_str=state.summary.release_date_str,
+            )
+            blocks = format_release_blocks(state.summary)
+            fallback_text = format_release_summary(state.summary)
+
+            try:
+                await client.chat_update(
+                    channel=channel,
+                    ts=state.message_ts,
+                    text=fallback_text,
+                    blocks=blocks,
+                )
+                logger.info(
+                    "release_updated",
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    ticket_count=len(state.tickets),
+                )
+            except Exception:
+                logger.exception("release_update_failed", channel=channel, thread_ts=thread_ts)
+                return False
+
+        return True
 
 
 def _build_plain_tickets(plain_items: list[PlainItem]) -> list[TicketInfo]:
@@ -231,3 +390,28 @@ def _filter_by_status(tickets: list[TicketInfo], status: str) -> list[TicketInfo
     """Keep only tickets whose state matches the requested status (case-insensitive)."""
     normalized = status.lower()
     return [t for t in tickets if t.state and t.state.lower() == normalized]
+
+
+def _remove_plain_by_text(
+    tickets: list[TicketInfo], remove_text: str
+) -> tuple[list[TicketInfo], set[str]]:
+    """Remove plain items (no identifier) whose title matches *remove_text*.
+
+    Matching strategy: exact match first, then substring in either direction.
+    Returns the filtered list and the set of removed title keys (lowered).
+    """
+    query = remove_text.lower().strip()
+    remaining: list[TicketInfo] = []
+    removed_titles: set[str] = set()
+
+    for t in tickets:
+        if t.identifier:
+            remaining.append(t)
+            continue
+        title_lower = t.title.lower().strip()
+        if title_lower == query or query in title_lower or title_lower in query:
+            removed_titles.add(title_lower)
+        else:
+            remaining.append(t)
+
+    return remaining, removed_titles
