@@ -48,6 +48,35 @@ DAY_LABELS = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Frid
 
 ORDINAL_SUFFIXES = {1: "st", 2: "nd", 3: "rd", 21: "st", 22: "nd", 23: "rd", 31: "st"}
 
+MONTH_NAMES = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2,
+    "march": 3, "mar": 3, "april": 4, "apr": 4,
+    "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+}
+
+EXPLICIT_DATE_RE = re.compile(
+    r"(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(\w+)"
+    r"|(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)"
+    r"|(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?",
+    re.IGNORECASE,
+)
+
+RELEASE_DATE_UPDATE = re.compile(
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?release\s+date\s*(?:to|is|:|=)\s*(.+)",
+    re.IGNORECASE,
+)
+DEV_ETA_UPDATE = re.compile(
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?dev\s+eta\s*(?:to|is|:|=)\s*(.+)",
+    re.IGNORECASE,
+)
+PROD_ETA_UPDATE = re.compile(
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?prod(?:uction)?\s+eta\s*(?:to|is|:|=)\s*(.+)",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class PlainItem:
@@ -154,6 +183,86 @@ def _extract_day_and_time(text: str) -> str | None:
     return date_part
 
 
+def _parse_explicit_date(text: str) -> date | None:
+    """Parse explicit dates like '15 May', '15th May', 'May 15', '15th of May'."""
+    m = EXPLICIT_DATE_RE.search(text)
+    if not m:
+        return None
+
+    if m.group(1) and m.group(2):
+        day_str, month_str = m.group(1), m.group(2)
+    elif m.group(3) and m.group(4):
+        day_str, month_str = m.group(3), m.group(4)
+    elif m.group(5) and m.group(6):
+        month_str, day_str = m.group(5), m.group(6)
+    else:
+        return None
+
+    month = MONTH_NAMES.get(month_str.lower())
+    if month is None:
+        return None
+
+    try:
+        day = int(day_str)
+        year = date.today().year
+        result = date(year, month, day)
+        if result < date.today():
+            result = date(year + 1, month, day)
+        return result
+    except (ValueError, OverflowError):
+        return None
+
+
+def _resolve_date_from_text(text: str) -> date | None:
+    """Resolve a date from free-form text — tries day names then explicit dates."""
+    day_match = DAY_NAME_TOKEN.search(text)
+    if day_match:
+        result = _resolve_day_to_date(day_match.group(1))
+        if result:
+            return result
+    return _parse_explicit_date(text)
+
+
+def _resolve_eta_text(text: str) -> str | None:
+    """Parse ETA text into a formatted string (date + optional time)."""
+    if text.strip().upper() == "TBD":
+        return "TBD"
+
+    result = _extract_day_and_time(text)
+    if result:
+        return result
+
+    d = _parse_explicit_date(text)
+    if not d:
+        return None
+
+    date_part = _format_date_short(d)
+    time_match = TIME_PATTERN.search(text)
+    if time_match:
+        return f"{date_part} {time_match.group(0).strip()}"
+    return date_part
+
+
+def _extract_item_indices(text: str) -> list[int]:
+    """Extract 1-based item numbers from text like 'item 2 and 3', '#2, #3'."""
+    cleaned = re.sub(
+        r"\s+(?:from|in)\s+(?:the\s+)?release\.?\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    numbers = [int(m.group(1)) for m in re.finditer(r"#?(\d+)", cleaned)]
+    if not numbers:
+        return []
+
+    if re.search(r"\bitems?\b", cleaned, re.IGNORECASE):
+        return numbers
+    if re.search(r"#\d", cleaned):
+        return numbers
+    return []
+
+
 def extract_release_metadata(first_message: str) -> dict[str, str | date | None]:
     """Extract release date, dev ETA, and prod ETA from the thread's opening message."""
     result: dict[str, str | date | None] = {
@@ -220,6 +329,10 @@ class UpdateAction:
     remove_ticket_ids: set[str] = field(default_factory=set)
     add_plain_items: list[PlainItem] = field(default_factory=list)
     remove_texts: list[str] = field(default_factory=list)
+    remove_indices: list[int] = field(default_factory=list)
+    new_release_date: str | None = None
+    new_dev_eta: str | None = None
+    new_prod_eta: str | None = None
 
     @property
     def has_changes(self) -> bool:
@@ -228,18 +341,22 @@ class UpdateAction:
             or self.remove_ticket_ids
             or self.add_plain_items
             or self.remove_texts
+            or self.remove_indices
+            or self.new_release_date is not None
+            or self.new_dev_eta is not None
+            or self.new_prod_eta is not None
         )
 
 
 def parse_update_message(text: str, user_id: str = "") -> UpdateAction:
-    """Parse a single thread message for release item additions and removals.
+    """Parse a single thread message for release item additions, removals,
+    and metadata updates (release date, dev/prod ETA).
 
     Per-line analysis:
-      - Lines with removal keywords (remove/drop/delete/exclude/take out)
-        treat contained ticket IDs as removals; if no IDs are found, the
-        remaining text is treated as a plain-item removal query.
-      - All other lines: ticket IDs are additions, and bulleted/numbered
-        items are added as plain release items.
+      1. Metadata updates — "change release date to …", "dev eta: …", etc.
+      2. Removal keywords — remove/drop/delete/exclude/take out; supports
+         ticket IDs, item indices ("remove item 2 and 3"), and plain text.
+      3. Additions — ticket IDs and bulleted/numbered plain items.
     """
     action = UpdateAction()
 
@@ -248,20 +365,45 @@ def parse_update_message(text: str, user_id: str = "") -> UpdateAction:
         if not line:
             continue
 
+        rd_match = RELEASE_DATE_UPDATE.search(line)
+        if rd_match:
+            resolved = _resolve_date_from_text(rd_match.group(1).strip())
+            if resolved:
+                action.new_release_date = _format_date(resolved)
+            continue
+
+        dev_match = DEV_ETA_UPDATE.search(line)
+        if dev_match:
+            resolved_eta = _resolve_eta_text(dev_match.group(1).strip())
+            if resolved_eta:
+                action.new_dev_eta = resolved_eta
+            continue
+
+        prod_match = PROD_ETA_UPDATE.search(line)
+        if prod_match:
+            resolved_eta = _resolve_eta_text(prod_match.group(1).strip())
+            if resolved_eta:
+                action.new_prod_eta = resolved_eta
+            continue
+
         removal_match = REMOVAL_LINE_PATTERN.search(line)
         if removal_match:
             rest = removal_match.group(1).strip()
             ids = extract_ticket_ids(rest)
             action.remove_ticket_ids.update(ids)
             if not ids:
-                cleaned = re.sub(
-                    r"\s+(?:from|in)\s+(?:the\s+)?release\.?\s*$",
-                    "",
-                    rest,
-                    flags=re.IGNORECASE,
-                ).strip().rstrip(".")
-                if cleaned:
-                    action.remove_texts.append(cleaned)
+                indices = _extract_item_indices(rest)
+                if indices:
+                    action.remove_indices.extend(indices)
+                else:
+                    cleaned = re.sub(
+                        r"\s+(?:from|in)\s+(?:the\s+)?release\.?\s*$",
+                        "",
+                        rest,
+                        flags=re.IGNORECASE,
+                    ).strip().rstrip(".")
+                    if cleaned:
+                        action.remove_texts.append(cleaned)
             continue
 
         ids = extract_ticket_ids(line)

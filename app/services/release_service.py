@@ -250,6 +250,25 @@ class ReleaseService:
         async with state.lock:
             changed = False
 
+            if action.remove_indices:
+                sorted_indices = sorted(set(action.remove_indices), reverse=True)
+                for idx in sorted_indices:
+                    pos = idx - 1
+                    if 0 <= pos < len(state.tickets):
+                        removed = state.tickets.pop(pos)
+                        if removed.identifier:
+                            state.ticket_ids.discard(removed.identifier)
+                        else:
+                            state.plain_titles.discard(removed.title.lower().strip())
+                        changed = True
+                if changed:
+                    logger.info(
+                        "items_removed_by_index",
+                        indices=sorted(action.remove_indices),
+                        channel=channel,
+                        thread_ts=thread_ts,
+                    )
+
             if action.remove_ticket_ids:
                 before = len(state.tickets)
                 state.tickets = [
@@ -328,6 +347,21 @@ class ReleaseService:
                     channel=channel,
                     thread_ts=thread_ts,
                 )
+
+            if action.new_release_date is not None:
+                state.summary.release_date_str = action.new_release_date
+                changed = True
+                logger.info("release_date_updated", new_date=action.new_release_date)
+
+            if action.new_dev_eta is not None:
+                state.summary.dev_eta = action.new_dev_eta
+                changed = True
+                logger.info("dev_eta_updated", new_eta=action.new_dev_eta)
+
+            if action.new_prod_eta is not None:
+                state.summary.prod_eta = action.new_prod_eta
+                changed = True
+                logger.info("prod_eta_updated", new_eta=action.new_prod_eta)
 
             if not changed:
                 return False
