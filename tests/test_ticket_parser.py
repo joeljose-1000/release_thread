@@ -155,6 +155,29 @@ class TestExtractFromMessages:
         assert result.plain_items[0].user_id == "U_ALICE"
         assert result.plain_items[1].user_id == "U_ALICE"
 
+    def test_eta_from_later_messages(self) -> None:
+        messages = [
+            "Please Share release items for next Thursday",
+            "https://linear.app/co/issue/WHA-2479/some-task",
+            "Dev eta May 20 12pm\nProd eta May 21 TBD",
+        ]
+        result = extract_from_messages(messages)
+        assert result.dev_eta is not None
+        assert "20th May" in result.dev_eta
+        assert "12pm" in result.dev_eta
+        assert result.prod_eta is not None
+        assert "21st May" in result.prod_eta
+
+    def test_later_eta_overrides_first_message_eta(self) -> None:
+        messages = [
+            "release items for Thursday\ndev eta: Monday",
+            "dev eta May 25 3pm",
+        ]
+        result = extract_from_messages(messages)
+        assert result.dev_eta is not None
+        assert "25th May" in result.dev_eta
+        assert "3pm" in result.dev_eta
+
 
 class TestParseUpdateMessage:
     def test_add_ticket_ids(self) -> None:
@@ -327,3 +350,40 @@ class TestParseUpdateMessage:
     def test_has_changes_with_metadata_only(self) -> None:
         action = parse_update_message("dev eta: Monday")
         assert action.has_changes
+
+    # --- ETA without separator ---
+
+    def test_dev_eta_no_separator(self) -> None:
+        action = parse_update_message("Dev eta May 20 12pm")
+        assert action.new_dev_eta is not None
+        assert "20th May" in action.new_dev_eta
+        assert "12pm" in action.new_dev_eta
+
+    def test_prod_eta_no_separator(self) -> None:
+        action = parse_update_message("Prod eta May 21 TBD")
+        assert action.new_prod_eta is not None
+
+    def test_prod_eta_no_separator_day_name(self) -> None:
+        action = parse_update_message("prod eta Thursday 3pm")
+        assert action.new_prod_eta is not None
+        assert "3pm" in action.new_prod_eta
+
+
+class TestReleaseDateNextThis:
+    def test_next_thursday(self) -> None:
+        messages = ["Please Share release items for next Thursday"]
+        result = extract_from_messages(messages)
+        assert result.release_date is not None
+        assert "Thursday" in result.release_date
+
+    def test_this_friday(self) -> None:
+        messages = ["release items for this Friday"]
+        result = extract_from_messages(messages)
+        assert result.release_date is not None
+        assert "Friday" in result.release_date
+
+    def test_plain_thursday_still_works(self) -> None:
+        messages = ["release items for Thursday"]
+        result = extract_from_messages(messages)
+        assert result.release_date is not None
+        assert "Thursday" in result.release_date

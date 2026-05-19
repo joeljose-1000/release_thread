@@ -30,8 +30,8 @@ DEV_ETA_PATTERN = re.compile(r"dev\s+eta\b.{0,60}", re.IGNORECASE)
 PROD_ETA_PATTERN = re.compile(r"prod(?:uction)?\s+eta\b.{0,60}", re.IGNORECASE)
 
 RELEASE_DATE_PATTERNS = [
-    re.compile(r"release\s+(?:items?\s+)?(?:for|on)\s+(\w+)", re.IGNORECASE),
-    re.compile(r"(?:for|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)", re.IGNORECASE),
+    re.compile(r"release\s+(?:items?\s+)?(?:for|on)\s+(?:next\s+|this\s+)?(\w+)", re.IGNORECASE),
+    re.compile(r"(?:for|on)\s+(?:next\s+|this\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)", re.IGNORECASE),
 ]
 
 DAY_NAMES = {
@@ -69,11 +69,11 @@ RELEASE_DATE_UPDATE = re.compile(
     re.IGNORECASE,
 )
 DEV_ETA_UPDATE = re.compile(
-    r"(?:(?:change|update|set)\s+(?:the\s+)?)?dev\s+eta\s*(?:to|is|:|=)\s*(.+)",
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?dev\s+eta\s*(?:to|is|:|=)?\s*(.+)",
     re.IGNORECASE,
 )
 PROD_ETA_UPDATE = re.compile(
-    r"(?:(?:change|update|set)\s+(?:the\s+)?)?prod(?:uction)?\s+eta\s*(?:to|is|:|=)\s*(.+)",
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?prod(?:uction)?\s+eta\s*(?:to|is|:|=)?\s*(.+)",
     re.IGNORECASE,
 )
 
@@ -296,6 +296,30 @@ def extract_release_metadata(first_message: str) -> dict[str, str | date | None]
     return result
 
 
+def _extract_eta_from_message(msg: str) -> tuple[str | None, str | None]:
+    """Try to extract dev and prod ETA from a single message using update patterns."""
+    dev_eta: str | None = None
+    prod_eta: str | None = None
+
+    for line in msg.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        dev_match = DEV_ETA_UPDATE.search(line)
+        if dev_match:
+            resolved = _resolve_eta_text(dev_match.group(1).strip())
+            if resolved:
+                dev_eta = resolved
+            continue
+        prod_match = PROD_ETA_UPDATE.search(line)
+        if prod_match:
+            resolved = _resolve_eta_text(prod_match.group(1).strip())
+            if resolved:
+                prod_eta = resolved
+
+    return dev_eta, prod_eta
+
+
 def extract_from_messages(
     messages: list[str],
     user_ids: list[str] | None = None,
@@ -317,6 +341,13 @@ def extract_from_messages(
         sender = (user_ids[idx] if user_ids and idx < len(user_ids) else "")
         for item_text in extract_plain_items(msg):
             result.plain_items.append(PlainItem(title=item_text, user_id=sender))
+
+        if idx > 0:
+            dev_eta, prod_eta = _extract_eta_from_message(msg)
+            if dev_eta:
+                result.dev_eta = dev_eta
+            if prod_eta:
+                result.prod_eta = prod_eta
 
     return result
 
