@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from difflib import get_close_matches
+
+import dateparser
 
 
 IDENTIFIER_PATTERN = re.compile(r"\b([A-Z]{2,10}-\d+)\b")
@@ -29,10 +32,36 @@ REMOVAL_LINE_PATTERN = re.compile(
 DEV_ETA_PATTERN = re.compile(r"dev\s+eta\b.{0,60}", re.IGNORECASE)
 PROD_ETA_PATTERN = re.compile(r"prod(?:uction)?\s+eta\b.{0,60}", re.IGNORECASE)
 
-RELEASE_DATE_PATTERNS = [
-    re.compile(r"release\s+(?:items?\s+)?(?:for|on)\s+(?:next\s+|this\s+)?(\w+)", re.IGNORECASE),
-    re.compile(r"(?:for|on)\s+(?:next\s+|this\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)", re.IGNORECASE),
-]
+RELEASE_DATE_PATTERN = re.compile(
+    r"(?:release\s+(?:items?\s+)?(?:for|on)\s+(.+)"
+    r"|(?:for|on)\s+(.+?)\s+release\b"
+    r"|(?:items?\s+for)\s+(.+?)\s+release\b)",
+    re.IGNORECASE,
+)
+
+RELEASE_DATE_UPDATE = re.compile(
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?"
+    r"release\s+"
+    r"(?:"
+    r"date\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)\s*"
+    r"|(?:moved?|planned)\s+(?:to|for)\s*"
+    r"|date\s+"
+    r")"
+    r"(.+)",
+    re.IGNORECASE,
+)
+DEV_ETA_UPDATE = re.compile(
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?dev\s+eta\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)?\s*(.+)",
+    re.IGNORECASE,
+)
+PROD_ETA_UPDATE = re.compile(
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?prod(?:uction)?\s+eta\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)?\s*(.+)",
+    re.IGNORECASE,
+)
+PIC_UPDATE = re.compile(
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?pic\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)\s*(.+)",
+    re.IGNORECASE,
+)
 
 DAY_NAMES = {
     "monday": 0, "mon": 0,
@@ -44,56 +73,42 @@ DAY_NAMES = {
     "sunday": 6, "sun": 6,
 }
 
+_CANONICAL_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def _fuzzy_day_match(word: str) -> int | None:
+    """Return weekday number if word is close enough to a day name, else None."""
+    lower = word.lower()
+    if lower in DAY_NAMES:
+        return DAY_NAMES[lower]
+    matches = get_close_matches(lower, _CANONICAL_DAYS, n=1, cutoff=0.7)
+    if matches:
+        return DAY_NAMES[matches[0]]
+    return None
+
 DAY_LABELS = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"}
 
 ORDINAL_SUFFIXES = {1: "st", 2: "nd", 3: "rd", 21: "st", 22: "nd", 23: "rd", 31: "st"}
 
-MONTH_NAMES = {
-    "january": 1, "jan": 1, "february": 2, "feb": 2,
-    "march": 3, "mar": 3, "april": 4, "apr": 4,
-    "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
-    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
-    "october": 10, "oct": 10, "november": 11, "nov": 11,
-    "december": 12, "dec": 12,
+DATEPARSER_SETTINGS = {
+    "PREFER_DATES_FROM": "future",
+    "PREFER_DAY_OF_MONTH": "first",
+    "RETURN_AS_TIMEZONE_AWARE": False,
 }
 
-EXPLICIT_DATE_RE = re.compile(
-    r"(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(\w+)"
-    r"|(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)"
-    r"|(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?",
+TIME_PATTERN = re.compile(r"\d{1,2}(?::\d{2})?\s*(?:am|pm)", re.IGNORECASE)
+BARE_ORDINAL_RE = re.compile(r"^(\d{1,2})(?:st|nd|rd|th)?$", re.IGNORECASE)
+
+_NOISE_RE = re.compile(
+    r"\b(?:changed?|moved?|updated?|set|planned|shifted)\s+(?:to|for)\s*",
     re.IGNORECASE,
 )
-
-RELEASE_DATE_UPDATE = re.compile(
-    r"(?:(?:change|update|set)\s+(?:the\s+)?)?release\s+date\s*(?:to|is|:|=)\s*(.+)",
-    re.IGNORECASE,
-)
-DEV_ETA_UPDATE = re.compile(
-    r"(?:(?:change|update|set)\s+(?:the\s+)?)?dev\s+eta\s*(?:to|is|:|=)?\s*(.+)",
-    re.IGNORECASE,
-)
-PROD_ETA_UPDATE = re.compile(
-    r"(?:(?:change|update|set)\s+(?:the\s+)?)?prod(?:uction)?\s+eta\s*(?:to|is|:|=)?\s*(.+)",
-    re.IGNORECASE,
-)
+_PREFIX_RE = re.compile(r"^\s*(?:next|this|coming)\s+", re.IGNORECASE)
 
 
-@dataclass
-class PlainItem:
-    """A release item described in plain text (no Linear ticket)."""
-    title: str
-    user_id: str = ""
-
-
-@dataclass
-class ParseResult:
-    ticket_ids: set[str] = field(default_factory=set)
-    plain_items: list[PlainItem] = field(default_factory=list)
-    status_filter: str | None = None
-    release_date: str | None = None
-    dev_eta: str | None = None
-    prod_eta: str | None = None
-
+# ---------------------------------------------------------------------------
+# Formatting helpers
+# ---------------------------------------------------------------------------
 
 def _ordinal(day: int) -> str:
     """Return day with ordinal suffix: 1st, 2nd, 3rd, 4th, etc."""
@@ -111,6 +126,113 @@ def _format_date_short(d: date) -> str:
     """Format a date as '7th May'."""
     return f"{_ordinal(d.day)} {d.strftime('%B')}"
 
+
+# ---------------------------------------------------------------------------
+# Date parsing (hybrid: DAY_NAMES for typos + dateparser for explicit dates)
+# ---------------------------------------------------------------------------
+
+def _resolve_day_name(text: str) -> date | None:
+    """Match against known day names (with fuzzy matching) and return next occurrence."""
+    stripped = _PREFIX_RE.sub("", text).strip().lower()
+    word = stripped.split()[0] if stripped else ""
+    target_weekday = _fuzzy_day_match(word)
+    if target_weekday is None:
+        return None
+    today = date.today()
+    days_ahead = (target_weekday - today.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    return today + timedelta(days=days_ahead)
+
+
+def _resolve_bare_ordinal(text: str) -> date | None:
+    """Parse '12th', '27th', '1st' etc. as a day in the current or next month."""
+    m = BARE_ORDINAL_RE.match(text.strip())
+    if not m:
+        return None
+    day = int(m.group(1))
+    today = date.today()
+    try:
+        result = date(today.year, today.month, day)
+        if result <= today:
+            if today.month == 12:
+                result = date(today.year + 1, 1, day)
+            else:
+                result = date(today.year, today.month + 1, day)
+        return result
+    except (ValueError, OverflowError):
+        return None
+
+
+def _parse_date(text: str) -> datetime | None:
+    """Parse free-form text into a datetime.
+
+    Strategy:
+    1. Strip noise words (changed to, moved to, etc.)
+    2. Try day-name resolution (handles typos via DAY_NAMES dict)
+    3. Try bare ordinal (12th, 27th — as day of current/next month)
+    4. Fall back to dateparser (handles explicit dates like '27th May', 'May 21')
+    """
+    cleaned = _NOISE_RE.sub("", text).strip()
+    if not cleaned:
+        return None
+
+    day_date = _resolve_day_name(cleaned)
+    if day_date:
+        time_match = TIME_PATTERN.search(cleaned)
+        if time_match:
+            time_parsed = dateparser.parse(time_match.group(0))
+            if time_parsed:
+                return datetime.combine(day_date, time_parsed.time())
+        return datetime.combine(day_date, datetime.min.time())
+
+    ordinal_date = _resolve_bare_ordinal(cleaned)
+    if ordinal_date:
+        return datetime.combine(ordinal_date, datetime.min.time())
+
+    return dateparser.parse(cleaned, settings=DATEPARSER_SETTINGS)
+
+
+def _resolve_date_from_text(text: str) -> date | None:
+    """Resolve a date from free-form text."""
+    parsed = _parse_date(text)
+    if parsed and parsed.date() >= date.today():
+        return parsed.date()
+    return None
+
+
+def _resolve_eta_text(text: str) -> str | None:
+    """Parse ETA text into a formatted string (date + optional time)."""
+    stripped = text.strip()
+    if stripped.upper() == "TBD":
+        return "TBD"
+
+    has_tbd = bool(re.search(r"\bTBD\b", stripped, re.IGNORECASE))
+    clean_text = re.sub(r"\s*\bTBD\b\s*", " ", stripped, flags=re.IGNORECASE).strip() if has_tbd else stripped
+
+    parsed = _parse_date(clean_text)
+    if not parsed:
+        return None
+
+    date_part = _format_date_short(parsed.date())
+
+    if has_tbd:
+        return f"{date_part} TBD"
+
+    if parsed.hour != 0 or parsed.minute != 0:
+        time_str = parsed.strftime("%-I%p").lower() if parsed.minute == 0 else parsed.strftime("%-I:%M%p").lower()
+        return f"{date_part} {time_str}"
+
+    time_match = TIME_PATTERN.search(text)
+    if time_match:
+        return f"{date_part} {time_match.group(0).strip()}"
+
+    return date_part
+
+
+# ---------------------------------------------------------------------------
+# Extraction helpers (tickets, plain items, status)
+# ---------------------------------------------------------------------------
 
 def extract_ticket_ids(text: str) -> set[str]:
     """Extract Linear ticket identifiers from plain text and URLs."""
@@ -138,111 +260,6 @@ def extract_plain_items(text: str) -> list[str]:
     return items
 
 
-def _resolve_day_to_date(day_str: str) -> date | None:
-    """Convert a day name to the next occurrence of that date."""
-    lower = day_str.strip().lower()
-    target_weekday = DAY_NAMES.get(lower)
-    if target_weekday is None:
-        return None
-    today = date.today()
-    days_ahead = (target_weekday - today.weekday()) % 7
-    if days_ahead == 0:
-        days_ahead = 7
-    return today + timedelta(days=days_ahead)
-
-
-TIME_PATTERN = re.compile(r"\d{1,2}(?::\d{2})?\s*(?:am|pm|AM|PM)")
-
-DAY_NAME_TOKEN = re.compile(
-    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday"
-    r"|mon|tue|tues|wed|thu|thurs|fri|sat|sun)\b",
-    re.IGNORECASE,
-)
-
-
-def _extract_day_and_time(text: str) -> str | None:
-    """Pull the day name and optional time from free-form text.
-
-    Works regardless of surrounding phrasing like "would be", "is on",
-    "set to", "around", etc.
-    """
-    day_match = DAY_NAME_TOKEN.search(text)
-    if not day_match:
-        return None
-
-    resolved = _resolve_day_to_date(day_match.group(1))
-    if not resolved:
-        return None
-
-    date_part = _format_date_short(resolved)
-
-    time_match = TIME_PATTERN.search(text)
-    if time_match:
-        return f"{date_part} {time_match.group(0).strip()}"
-
-    return date_part
-
-
-def _parse_explicit_date(text: str) -> date | None:
-    """Parse explicit dates like '15 May', '15th May', 'May 15', '15th of May'."""
-    m = EXPLICIT_DATE_RE.search(text)
-    if not m:
-        return None
-
-    if m.group(1) and m.group(2):
-        day_str, month_str = m.group(1), m.group(2)
-    elif m.group(3) and m.group(4):
-        day_str, month_str = m.group(3), m.group(4)
-    elif m.group(5) and m.group(6):
-        month_str, day_str = m.group(5), m.group(6)
-    else:
-        return None
-
-    month = MONTH_NAMES.get(month_str.lower())
-    if month is None:
-        return None
-
-    try:
-        day = int(day_str)
-        year = date.today().year
-        result = date(year, month, day)
-        if result < date.today():
-            result = date(year + 1, month, day)
-        return result
-    except (ValueError, OverflowError):
-        return None
-
-
-def _resolve_date_from_text(text: str) -> date | None:
-    """Resolve a date from free-form text — tries day names then explicit dates."""
-    day_match = DAY_NAME_TOKEN.search(text)
-    if day_match:
-        result = _resolve_day_to_date(day_match.group(1))
-        if result:
-            return result
-    return _parse_explicit_date(text)
-
-
-def _resolve_eta_text(text: str) -> str | None:
-    """Parse ETA text into a formatted string (date + optional time)."""
-    if text.strip().upper() == "TBD":
-        return "TBD"
-
-    result = _extract_day_and_time(text)
-    if result:
-        return result
-
-    d = _parse_explicit_date(text)
-    if not d:
-        return None
-
-    date_part = _format_date_short(d)
-    time_match = TIME_PATTERN.search(text)
-    if time_match:
-        return f"{date_part} {time_match.group(0).strip()}"
-    return date_part
-
-
 def _extract_item_indices(text: str) -> list[int]:
     """Extract 1-based item numbers from text like 'item 2 and 3', '#2, #3'."""
     cleaned = re.sub(
@@ -263,6 +280,10 @@ def _extract_item_indices(text: str) -> list[int]:
     return []
 
 
+# ---------------------------------------------------------------------------
+# Release metadata extraction (from thread's first message)
+# ---------------------------------------------------------------------------
+
 def extract_release_metadata(first_message: str) -> dict[str, str | date | None]:
     """Extract release date, dev ETA, and prod ETA from the thread's opening message."""
     result: dict[str, str | date | None] = {
@@ -273,22 +294,26 @@ def extract_release_metadata(first_message: str) -> dict[str, str | date | None]
     }
 
     release_date_obj: date | None = None
-    for pattern in RELEASE_DATE_PATTERNS:
-        m = pattern.search(first_message)
-        if m:
-            release_date_obj = _resolve_day_to_date(m.group(1))
+    m = RELEASE_DATE_PATTERN.search(first_message)
+    if m:
+        date_text = m.group(1) or m.group(2) or m.group(3)
+        if date_text:
+            release_date_obj = _resolve_date_from_text(date_text.strip())
             if release_date_obj:
                 result["release_date"] = _format_date(release_date_obj)
                 result["release_date_obj"] = release_date_obj
-            break
 
     dev_match = DEV_ETA_PATTERN.search(first_message)
     if dev_match:
-        result["dev_eta"] = _extract_day_and_time(dev_match.group(0))
+        eta_text = re.sub(r"^dev\s+eta\s*", "", dev_match.group(0), flags=re.IGNORECASE).strip()
+        if eta_text:
+            result["dev_eta"] = _resolve_eta_text(eta_text)
 
     prod_match = PROD_ETA_PATTERN.search(first_message)
     if prod_match:
-        result["prod_eta"] = _extract_day_and_time(prod_match.group(0))
+        eta_text = re.sub(r"^prod(?:uction)?\s+eta\s*", "", prod_match.group(0), flags=re.IGNORECASE).strip()
+        if eta_text:
+            result["prod_eta"] = _resolve_eta_text(eta_text)
 
     if not result["prod_eta"] and release_date_obj:
         result["prod_eta"] = f"{_format_date_short(release_date_obj)} TBD"
@@ -318,6 +343,27 @@ def _extract_eta_from_message(msg: str) -> tuple[str | None, str | None]:
                 prod_eta = resolved
 
     return dev_eta, prod_eta
+
+
+# ---------------------------------------------------------------------------
+# Multi-message extraction (initial thread scan)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PlainItem:
+    """A release item described in plain text (no Linear ticket)."""
+    title: str
+    user_id: str = ""
+
+
+@dataclass
+class ParseResult:
+    ticket_ids: set[str] = field(default_factory=set)
+    plain_items: list[PlainItem] = field(default_factory=list)
+    status_filter: str | None = None
+    release_date: str | None = None
+    dev_eta: str | None = None
+    prod_eta: str | None = None
 
 
 def extract_from_messages(
@@ -352,6 +398,10 @@ def extract_from_messages(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Real-time thread update parsing
+# ---------------------------------------------------------------------------
+
 @dataclass
 class UpdateAction:
     """Parsed add/remove actions from a single real-time thread message."""
@@ -364,6 +414,7 @@ class UpdateAction:
     new_release_date: str | None = None
     new_dev_eta: str | None = None
     new_prod_eta: str | None = None
+    new_pic: str | None = None
 
     @property
     def has_changes(self) -> bool:
@@ -376,6 +427,7 @@ class UpdateAction:
             or self.new_release_date is not None
             or self.new_dev_eta is not None
             or self.new_prod_eta is not None
+            or self.new_pic is not None
         )
 
 
@@ -394,6 +446,11 @@ def parse_update_message(text: str, user_id: str = "") -> UpdateAction:
     for line in text.split("\n"):
         line = line.strip()
         if not line:
+            continue
+
+        pic_match = PIC_UPDATE.search(line)
+        if pic_match:
+            action.new_pic = pic_match.group(1).strip()
             continue
 
         rd_match = RELEASE_DATE_UPDATE.search(line)

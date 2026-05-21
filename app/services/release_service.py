@@ -363,10 +363,18 @@ class ReleaseService:
                 changed = True
                 logger.info("prod_eta_updated", new_eta=action.new_prod_eta)
 
+            if action.new_pic is not None:
+                state.pic_override = action.new_pic
+                changed = True
+                logger.info("pic_updated", new_pic=action.new_pic)
+
             if not changed:
                 return False
 
-            pic = determine_pic(state.tickets)
+            if state.pic_override:
+                pic = state.pic_override
+            else:
+                pic = determine_pic(state.tickets)
             if pic.startswith("@"):
                 pic = self._resolve_assignee(pic[1:], state.name_map)
 

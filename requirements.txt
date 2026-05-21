@@ -22,6 +22,9 @@ Pillow>=11.0.0
 # OpenAI (optional, for Vision OCR)
 openai>=1.60.0
 
+# Date parsing
+dateparser>=1.2.0
+
 # Retry logic
 tenacity>=9.0.0
 

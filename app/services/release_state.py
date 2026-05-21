@@ -19,6 +19,7 @@ class ReleaseState:
     name_map: dict[str, str]
     ticket_ids: set[str] = field(default_factory=set)
     plain_titles: set[str] = field(default_factory=set)
+    pic_override: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
