@@ -18,7 +18,7 @@ class TestFormatReleaseSummary:
         )
         result = format_release_summary(summary)
 
-        assert "*RELEASE <May 4>*" in result
+        assert "*RELEASE <4th May - Sunday>*" in result
         assert "*PIC:* @raj" in result
         assert "*Bugs and Improvements:*" in result
         assert "1. <" in result
