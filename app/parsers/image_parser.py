@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 
 from app.ocr.base import OCRProvider
-from app.parsers.ticket_parser import extract_ticket_ids
+from app.parsers.parser_utils import extract_ticket_ids
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)

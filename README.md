@@ -222,7 +222,9 @@ app/
     vision.py             # OpenAI Vision provider
     factory.py            # Provider factory
   parsers/
-    ticket_parser.py      # Regex extraction
+    parser_utils.py       # Shared patterns, date helpers, ticket/item extraction
+    initial_parser.py     # Initial thread parsing (release metadata, ETAs)
+    update_parser.py      # Live edit parsing (add/remove, PIC, date/ETA updates)
     image_parser.py       # Image download + OCR
   services/
     release_service.py    # Orchestrator
@@ -234,7 +236,9 @@ app/
     logging.py            # structlog setup
     retry.py              # tenacity retry decorator
 tests/
-  test_ticket_parser.py
+  test_parser_utils.py
+  test_initial_parser.py
+  test_update_parser.py
   test_pic_service.py
   test_formatter.py
   test_linear_client.py
