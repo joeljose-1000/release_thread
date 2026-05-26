@@ -1,0 +1,15 @@
+---
+description: Keep README.md in sync when features, parsers, or configurations change
+alwaysApply: true
+---
+
+# Update README on Changes
+
+When making changes to any of the following, update `README.md` to reflect them:
+
+- **Parser patterns** (`app/parsers/parser_utils.py`, `app/parsers/initial_parser.py`, `app/parsers/update_parser.py`) — update the "Live Thread Updates" section with new or modified formats
+- **Environment variables** (`app/config/settings.py`) — update the "Environment Variables" table
+- **Slack commands or event handlers** (`app/slack/commands.py`) — update "Flow" or "Slash Command Configuration"
+- **OCR providers** (`app/ocr/`) — update the "OCR Providers" table
+- **Architecture changes** (new modules, renamed files) — update the "Architecture" tree
+- **Release summary format** (`app/slack/formatter.py`) — update the "Release Summary Format" example
