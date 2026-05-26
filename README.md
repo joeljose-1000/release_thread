@@ -273,6 +273,113 @@ Ticket titles are clickable Slack hyperlinks. Raw URLs are never visible.
 
 ---
 
+## Live Thread Updates
+
+After a release summary is posted, you can update it by sending messages in the same thread. The bot parses the message, updates the summary in place, and reacts with ✅.
+
+### Change PIC
+
+| Format | Example |
+|--------|---------|
+| `PIC: @name` | `PIC: @sharooq` |
+| `PIC is @name` | `PIC is @javad` |
+| `change PIC to @name` | `change PIC to @sharooq` |
+| `update PIC to @name` | `update PIC to @javad` |
+| `set PIC to @name` | `set PIC to @alexander` |
+| `PIC changed to @name` | `PIC changed to @sharooq` |
+
+### Change Release Date
+
+| Format | Example |
+|--------|---------|
+| `release date is <date>` | `release date is 22nd June` |
+| `release date: <date>` | `release date: Thursday` |
+| `change release date to <date>` | `change release date to next Friday` |
+| `release moved to <date>` | `release moved to 20th May` |
+| `release planned for <date>` | `release planned for June 22` |
+| `release date changed to <date>` | `release date changed to Thursday` |
+
+### Update Dev ETA
+
+| Format | Example |
+|--------|---------|
+| `dev eta: <date/time>` | `dev eta: Monday 9am` |
+| `dev eta <date/time>` | `dev eta May 20 12pm` |
+| `dev eta is <date/time>` | `dev eta is TBD` |
+| `change dev eta to <date/time>` | `change dev eta to 15 May 9am` |
+| `update dev eta to <date/time>` | `update dev eta to 20 May` |
+| `dev eta changed to <date/time>` | `dev eta changed to Monday 3pm` |
+
+### Update Prod ETA
+
+Same patterns as Dev ETA, using `prod eta` or `production eta`:
+
+| Format | Example |
+|--------|---------|
+| `prod eta: <date/time>` | `prod eta: Wednesday 3pm` |
+| `production eta updated to <date/time>` | `production eta updated to 16 May 4pm` |
+| `set prod eta to <date/time>` | `set prod eta to TBD` |
+
+### Add Tickets
+
+| Format | Example |
+|--------|---------|
+| Ticket ID | `ENG-123` |
+| Multiple IDs | `ENG-123 and PLAT-456` |
+| Linear URL | `https://linear.app/team/issue/ENG-789/fix-something` |
+
+### Add Plain Items
+
+| Format | Example |
+|--------|---------|
+| Bulleted | `- Fix caching layer` |
+| Numbered | `1. Fix caching layer` |
+
+### Remove Items
+
+**By ticket ID:**
+
+| Format | Example |
+|--------|---------|
+| `remove <ID>` | `remove ENG-123` |
+| `drop <ID>` | `drop ENG-123 and ENG-456` |
+| `delete <ID>` | `delete ENG-200` |
+| `exclude <ID>` | `exclude ENG-300` |
+| `take out <ID>` | `take out ENG-400` |
+
+**By item number:**
+
+| Format | Example |
+|--------|---------|
+| `remove item <N>` | `remove item 2` |
+| `remove item <N> and <N>` | `remove item 2 and 3` |
+| `remove items <N>, <N>, <N>` | `remove items 1, 4, 5` |
+| `remove #<N> and #<N>` | `remove #2 and #3` |
+| `drop item <N>` | `drop item 3 from the release` |
+
+**By description:**
+
+| Format | Example |
+|--------|---------|
+| `remove <text>` | `remove fix login page` |
+| `drop <text>` | `drop the admin whitelist fix` |
+
+### Supported Date Formats
+
+All date fields (release date, dev/prod ETA) accept:
+
+| Format | Example |
+|--------|---------|
+| Day name | `Monday`, `Thursday` |
+| With prefix | `next Friday`, `this Wednesday` |
+| Fuzzy day name | `thrusday` → Thursday |
+| Ordinal only | `12th`, `22nd` (current or next month) |
+| Day + month | `27th May`, `May 21`, `June 22` |
+| Date + time | `15 May 9am`, `Monday 3pm` |
+| TBD | `TBD` |
+
+---
+
 ## OCR Providers
 
 | Provider | Pros | Cons |

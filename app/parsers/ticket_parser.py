@@ -40,26 +40,31 @@ RELEASE_DATE_PATTERN = re.compile(
 )
 
 RELEASE_DATE_UPDATE = re.compile(
-    r"(?:(?:change|update|set)\s+(?:the\s+)?)?"
-    r"release\s+"
     r"(?:"
-    r"date\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)\s*"
-    r"|(?:moved?|planned)\s+(?:to|for)\s*"
-    r"|date\s+"
+    r"(?:change|update|set)\s+(?:the\s+)?release\s+(?:date\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)\s*|(?:moved?|planned)\s+(?:to|for)\s*|date\s+)"
+    r"|release\s+(?:date\s*(?:(?:changed?|moved?)\s+to|is|:|=)\s*|(?:moved?|planned)\s+(?:to|for)\s*)"
     r")"
     r"(.+)",
     re.IGNORECASE,
 )
 DEV_ETA_UPDATE = re.compile(
-    r"(?:(?:change|update|set)\s+(?:the\s+)?)?dev\s+eta\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)?\s*(.+)",
+    r"(?:"
+    r"(?:change|update|set)\s+(?:the\s+)?dev\s+eta\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)\s*"
+    r"|dev\s+eta\s*(?:(?:changed?|moved?)\s+to|is|:|=)?\s*"
+    r")"
+    r"(.+)",
     re.IGNORECASE,
 )
 PROD_ETA_UPDATE = re.compile(
-    r"(?:(?:change|update|set)\s+(?:the\s+)?)?prod(?:uction)?\s+eta\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)?\s*(.+)",
+    r"(?:"
+    r"(?:change|update|set)\s+(?:the\s+)?prod(?:uction)?\s+eta\s*(?:(?:changed?|moved?|updated)\s+to|to|is|:|=)\s*"
+    r"|prod(?:uction)?\s+eta\s*(?:(?:changed?|moved?|updated)\s+to|is|:|=)?\s*"
+    r")"
+    r"(.+)",
     re.IGNORECASE,
 )
 PIC_UPDATE = re.compile(
-    r"(?:(?:change|update|set)\s+(?:the\s+)?)?pic\s*(?:(?:changed?|moved?)\s+to|to|is|:|=)\s*(.+)",
+    r"(?:(?:change|update|set)\s+(?:the\s+)?)?pic\s*(?:(?:changed?|moved?)\s+to|to|is|:)\s*(.+)",
     re.IGNORECASE,
 )
 
