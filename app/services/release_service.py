@@ -8,7 +8,9 @@ from app.models.release import ReleaseSummary
 from app.models.ticket import TicketInfo
 from app.ocr.base import OCRProvider
 from app.parsers.image_parser import extract_tickets_from_images
-from app.parsers.ticket_parser import PlainItem, extract_from_messages, parse_update_message
+from app.parsers.initial_parser import extract_from_messages
+from app.parsers.parser_utils import PlainItem
+from app.parsers.update_parser import parse_update_message
 from app.services.pic_service import determine_pic
 from app.services.release_state import ReleaseState, ReleaseStateStore
 from app.slack.formatter import format_release_blocks, format_release_summary
