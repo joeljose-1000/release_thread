@@ -191,3 +191,100 @@ class TestParseUpdateMessage:
         action = parse_update_message("prod eta Thursday 3pm")
         assert action.new_prod_eta is not None
         assert "3pm" in action.new_prod_eta
+
+    # --- Category changes ---
+
+    def test_item_as_category(self) -> None:
+        action = parse_update_message("item 7 as Feature")
+        assert len(action.category_changes) == 1
+        assert action.category_changes[0].indices == [7]
+        assert action.category_changes[0].category == "Features"
+
+    def test_mark_item_as_unsupported_category_ignored(self) -> None:
+        action = parse_update_message("mark item 3 as Hotfix")
+        assert len(action.category_changes) == 0
+
+    def test_move_item_to_category(self) -> None:
+        action = parse_update_message("move item 2 to Feature")
+        assert len(action.category_changes) == 1
+        assert action.category_changes[0].indices == [2]
+        assert action.category_changes[0].category == "Features"
+
+    def test_multiple_items_as_category(self) -> None:
+        action = parse_update_message("items 1, 3, 5 as Feature")
+        assert len(action.category_changes) == 1
+        assert sorted(action.category_changes[0].indices) == [1, 3, 5]
+        assert action.category_changes[0].category == "Features"
+
+    def test_items_and_keyword_as_category(self) -> None:
+        action = parse_update_message("item 2 and 4 as Feature")
+        assert len(action.category_changes) == 1
+        assert sorted(action.category_changes[0].indices) == [2, 4]
+
+    def test_hash_notation_category(self) -> None:
+        action = parse_update_message("#7 as Feature")
+        assert len(action.category_changes) == 1
+        assert action.category_changes[0].indices == [7]
+
+    def test_ticket_id_as_category(self) -> None:
+        action = parse_update_message("ENG-123 as Feature")
+        assert len(action.category_changes) == 1
+        assert action.category_changes[0].ticket_ids == {"ENG-123"}
+        assert action.category_changes[0].category == "Features"
+
+    def test_multiple_ticket_ids_as_category(self) -> None:
+        action = parse_update_message("ENG-123, PLAT-456 as Feature")
+        assert len(action.category_changes) == 1
+        assert action.category_changes[0].ticket_ids == {"ENG-123", "PLAT-456"}
+
+    def test_category_has_changes(self) -> None:
+        action = parse_update_message("item 7 as Feature")
+        assert action.has_changes
+
+    def test_category_does_not_trigger_removal(self) -> None:
+        action = parse_update_message("item 7 as Feature")
+        assert action.remove_indices == []
+        assert action.remove_texts == []
+
+    def test_unsupported_category_ignored(self) -> None:
+        action = parse_update_message("item 1 as Tech Debt")
+        assert len(action.category_changes) == 0
+
+    def test_category_case_normalized(self) -> None:
+        action = parse_update_message("item 1 as feature")
+        assert action.category_changes[0].category == "Features"
+
+    def test_already_plural_stays_plural(self) -> None:
+        action = parse_update_message("item 1 as Features")
+        assert action.category_changes[0].category == "Features"
+
+    def test_multiple_category_lines(self) -> None:
+        text = "item 7 as Feature\nitem 3 as Features"
+        action = parse_update_message(text)
+        assert len(action.category_changes) == 2
+
+    # --- Hotfix header ---
+
+    def test_hotfix_standalone(self) -> None:
+        action = parse_update_message("hotfix")
+        assert action.is_hotfix is True
+
+    def test_this_is_a_hotfix(self) -> None:
+        action = parse_update_message("this is a hotfix")
+        assert action.is_hotfix is True
+
+    def test_mark_as_hotfix(self) -> None:
+        action = parse_update_message("mark as hotfix")
+        assert action.is_hotfix is True
+
+    def test_change_to_hotfix(self) -> None:
+        action = parse_update_message("change to hotfix")
+        assert action.is_hotfix is True
+
+    def test_hotfix_has_changes(self) -> None:
+        action = parse_update_message("this is a hotfix")
+        assert action.has_changes
+
+    def test_hotfix_does_not_create_category(self) -> None:
+        action = parse_update_message("this is a hotfix")
+        assert len(action.category_changes) == 0

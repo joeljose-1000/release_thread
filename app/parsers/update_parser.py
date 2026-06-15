@@ -46,6 +46,42 @@ PIC_UPDATE = re.compile(
     re.IGNORECASE,
 )
 
+_FEATURES_ALIASES = {"feature", "features"}
+
+
+def _normalize_category(name: str) -> str | None:
+    """Return 'Features' if the name is a feature alias, else None (unsupported)."""
+    if name.strip().lower() in _FEATURES_ALIASES:
+        return "Features"
+    return None
+
+
+HOTFIX_PATTERN = re.compile(
+    r"(?:"
+    r"(?:this|it)\s+is\s+(?:a\s+)?hotfix"
+    r"|(?:mark|set|change|make)\s+(?:(?:this|it|release)\s+)?(?:as\s+|to\s+)?(?:a\s+)?hotfix"
+    r"|hotfix\s+release"
+    r"|^hotfix\.?$"
+    r")",
+    re.IGNORECASE,
+)
+
+CATEGORY_BY_INDEX_PATTERN = re.compile(
+    r"(?:(?:mark|move|set|categorize|classify)\s+)?"
+    r"(?:items?\s+|#)([\d\s,#and]+?)"
+    r"\s+(?:as(?:\s+an?)?|to|under|into)\s+"
+    r"(.+?)\.?\s*$",
+    re.IGNORECASE,
+)
+
+CATEGORY_BY_TICKET_PATTERN = re.compile(
+    r"(?:(?:mark|move|set|categorize|classify)\s+)?"
+    r"([A-Z]{2,10}-\d+(?:\s*(?:,\s*|and\s+)[A-Z]{2,10}-\d+)*)"
+    r"\s+(?:as(?:\s+an?)?|to|under|into)\s+"
+    r"(.+?)\.?\s*$",
+    re.IGNORECASE,
+)
+
 
 def _extract_item_indices(text: str) -> list[int]:
     """Extract 1-based item numbers from text like 'item 2 and 3', '#2, #3'."""
@@ -68,6 +104,15 @@ def _extract_item_indices(text: str) -> list[int]:
 
 
 @dataclass
+class CategoryChange:
+    """A request to re-categorize items by index or ticket ID."""
+
+    indices: list[int] = field(default_factory=list)
+    ticket_ids: set[str] = field(default_factory=set)
+    category: str = ""
+
+
+@dataclass
 class UpdateAction:
     """Parsed add/remove actions from a single real-time thread message."""
 
@@ -76,6 +121,8 @@ class UpdateAction:
     add_plain_items: list[PlainItem] = field(default_factory=list)
     remove_texts: list[str] = field(default_factory=list)
     remove_indices: list[int] = field(default_factory=list)
+    category_changes: list[CategoryChange] = field(default_factory=list)
+    is_hotfix: bool | None = None
     new_release_date: str | None = None
     new_dev_eta: str | None = None
     new_prod_eta: str | None = None
@@ -89,6 +136,8 @@ class UpdateAction:
             or self.add_plain_items
             or self.remove_texts
             or self.remove_indices
+            or self.category_changes
+            or self.is_hotfix is not None
             or self.new_release_date is not None
             or self.new_dev_eta is not None
             or self.new_prod_eta is not None
@@ -111,6 +160,10 @@ def parse_update_message(text: str, user_id: str = "") -> UpdateAction:
     for line in text.split("\n"):
         line = line.strip()
         if not line:
+            continue
+
+        if HOTFIX_PATTERN.search(line):
+            action.is_hotfix = True
             continue
 
         pic_match = PIC_UPDATE.search(line)
@@ -137,6 +190,26 @@ def parse_update_message(text: str, user_id: str = "") -> UpdateAction:
             resolved_eta = _resolve_eta_text(prod_match.group(1).strip())
             if resolved_eta:
                 action.new_prod_eta = resolved_eta
+            continue
+
+        cat_idx_match = CATEGORY_BY_INDEX_PATTERN.search(line)
+        if cat_idx_match:
+            nums = [int(n) for n in re.findall(r"\d+", cat_idx_match.group(1))]
+            category = _normalize_category(cat_idx_match.group(2))
+            if nums and category:
+                action.category_changes.append(
+                    CategoryChange(indices=nums, category=category)
+                )
+            continue
+
+        cat_ticket_match = CATEGORY_BY_TICKET_PATTERN.search(line)
+        if cat_ticket_match:
+            ids = {m.upper() for m in re.findall(r"[A-Za-z]{2,10}-\d+", cat_ticket_match.group(1))}
+            category = _normalize_category(cat_ticket_match.group(2))
+            if ids and category:
+                action.category_changes.append(
+                    CategoryChange(ticket_ids=ids, category=category)
+                )
             continue
 
         removal_match = REMOVAL_LINE_PATTERN.search(line)

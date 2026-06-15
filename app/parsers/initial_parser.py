@@ -19,11 +19,13 @@ DEV_ETA_PATTERN = re.compile(r"dev\s+eta\b.{0,60}", re.IGNORECASE)
 PROD_ETA_PATTERN = re.compile(r"prod(?:uction)?\s+eta\b.{0,60}", re.IGNORECASE)
 
 RELEASE_DATE_PATTERN = re.compile(
-    r"(?:release\s+(?:items?\s+)?(?:for|on)\s+(.+)"
-    r"|(?:for|on)\s+(.+?)\s+release\b"
-    r"|(?:items?\s+for)\s+(.+?)\s+release\b)",
+    r"(?:(?:release|hotfix)\s+(?:items?\s+)?(?:for|on)\s+(.+)"
+    r"|(?:for|on)\s+(.+?)\s+(?:release|hotfix)\b"
+    r"|(?:items?\s+for)\s+(.+?)\s+(?:release|hotfix)\b)",
     re.IGNORECASE,
 )
+
+HOTFIX_HEADER_PATTERN = re.compile(r"\bhotfix\b", re.IGNORECASE)
 
 DEV_ETA_UPDATE = re.compile(
     r"(?:"
@@ -43,13 +45,14 @@ PROD_ETA_UPDATE = re.compile(
 )
 
 
-def extract_release_metadata(first_message: str) -> dict[str, str | date | None]:
-    """Extract release date, dev ETA, and prod ETA from the thread's opening message."""
-    result: dict[str, str | date | None] = {
+def extract_release_metadata(first_message: str) -> dict[str, str | date | bool | None]:
+    """Extract release date, dev ETA, prod ETA, and hotfix flag from the opening message."""
+    result: dict[str, str | date | bool | None] = {
         "release_date": None,
         "release_date_obj": None,
         "dev_eta": None,
         "prod_eta": None,
+        "is_hotfix": bool(HOTFIX_HEADER_PATTERN.search(first_message)),
     }
 
     release_date_obj: date | None = None
@@ -112,6 +115,7 @@ class ParseResult:
     release_date: str | None = None
     dev_eta: str | None = None
     prod_eta: str | None = None
+    is_hotfix: bool = False
 
 
 def extract_from_messages(
@@ -126,6 +130,7 @@ def extract_from_messages(
         result.release_date = metadata.get("release_date")  # type: ignore[assignment]
         result.dev_eta = metadata.get("dev_eta")  # type: ignore[assignment]
         result.prod_eta = metadata.get("prod_eta")  # type: ignore[assignment]
+        result.is_hotfix = bool(metadata.get("is_hotfix"))
 
     for idx, msg in enumerate(messages):
         result.ticket_ids.update(extract_ticket_ids(msg))
