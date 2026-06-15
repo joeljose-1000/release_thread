@@ -264,6 +264,10 @@ tests/
 
 PIC: @raj
 
+Feature:
+
+1. <https://linear.app/company/issue/ENG-333|Add dark mode> - @raj
+
 Bugs and Improvements:
 
 1. <https://linear.app/company/issue/ENG-101|Fix onboarding crash> - @raj
@@ -273,7 +277,7 @@ Dev ETA : TBD
 Prod ETA : TBD
 ```
 
-Ticket titles are clickable Slack hyperlinks. Raw URLs are never visible.
+Ticket titles are clickable Slack hyperlinks. Raw URLs are never visible. Each category has its own independent numbering. All items default to "Bugs and Improvements" and can be moved to other categories (e.g. Feature) via thread commands.
 
 ---
 
@@ -338,6 +342,38 @@ Same patterns as Dev ETA, using `prod eta` or `production eta`:
 |--------|---------|
 | Bulleted | `- Fix caching layer` |
 | Numbered | `1. Fix caching layer` |
+
+### Categorize Items as Features
+
+All items start under **Bugs and Improvements**. You can move items to **Features** using these formats. Item numbers refer to the position within the Bugs and Improvements list. Each category gets its own independent numbering in the summary. Only "Feature" / "Features" is supported as a target category.
+
+**By item number:**
+
+| Format | Example |
+|--------|---------|
+| `item <N> as Feature` | `item 7 as Feature` |
+| `move item <N> to Feature` | `move item 2 to Feature` |
+| `items <N>, <N> as Feature` | `items 1, 3, 5 as Feature` |
+| `#<N> as Feature` | `#7 as Feature` |
+
+**By ticket ID:**
+
+| Format | Example |
+|--------|---------|
+| `<ID> as Feature` | `ENG-123 as Feature` |
+| `mark <ID> as Feature` | `mark ENG-123 as Feature` |
+| `<ID>, <ID> as Feature` | `ENG-123, PLAT-456 as Feature` |
+
+### Mark as Hotfix
+
+If the release is a hotfix, the header changes from **RELEASE** to **HOTFIX**. This is detected automatically if the initial thread message contains the word "hotfix", or can be set via a thread reply:
+
+| Format | Example |
+|--------|---------|
+| `hotfix` | `hotfix` |
+| `this is a hotfix` | `this is a hotfix` |
+| `mark as hotfix` | `mark as hotfix` |
+| `change to hotfix` | `change to hotfix` |
 
 ### Remove Items
 

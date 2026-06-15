@@ -83,3 +83,21 @@ class TestReleaseDateNextThis:
         result = extract_from_messages(messages)
         assert result.release_date is not None
         assert "Thursday" in result.release_date
+
+
+class TestHotfixDetection:
+    def test_hotfix_in_header(self) -> None:
+        messages = ["hotfix items for Thursday"]
+        result = extract_from_messages(messages)
+        assert result.is_hotfix is True
+        assert result.release_date is not None
+
+    def test_hotfix_keyword_anywhere(self) -> None:
+        messages = ["This is a hotfix release\nDev ETA: Monday"]
+        result = extract_from_messages(messages)
+        assert result.is_hotfix is True
+
+    def test_normal_release_not_hotfix(self) -> None:
+        messages = ["release items for Thursday"]
+        result = extract_from_messages(messages)
+        assert result.is_hotfix is False

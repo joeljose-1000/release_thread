@@ -14,3 +14,4 @@ class ReleaseSummary(BaseModel):
     pic: str = "TBD"
     dev_eta: str = "TBD"
     prod_eta: str = "TBD"
+    is_hotfix: bool = False

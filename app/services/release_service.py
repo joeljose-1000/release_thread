@@ -5,7 +5,7 @@ from typing import Any
 from app.config.settings import Settings
 from app.linear.client import LinearClient
 from app.models.release import ReleaseSummary
-from app.models.ticket import TicketInfo
+from app.models.ticket import DEFAULT_CATEGORY, TicketInfo
 from app.ocr.base import OCRProvider
 from app.parsers.image_parser import extract_tickets_from_images
 from app.parsers.initial_parser import extract_from_messages
@@ -190,6 +190,7 @@ class ReleaseService:
                 dev_eta=parse_result.dev_eta or "TBD",
                 prod_eta=parse_result.prod_eta or "TBD",
                 release_date_str=parse_result.release_date,
+                is_hotfix=parse_result.is_hotfix,
             )
             blocks = format_release_blocks(summary)
             fallback_text = format_release_summary(summary)
@@ -255,9 +256,9 @@ class ReleaseService:
             if action.remove_indices:
                 sorted_indices = sorted(set(action.remove_indices), reverse=True)
                 for idx in sorted_indices:
-                    pos = idx - 1
-                    if 0 <= pos < len(state.tickets):
-                        removed = state.tickets.pop(pos)
+                    target = _nth_in_category(state.tickets, DEFAULT_CATEGORY, idx)
+                    if target is not None:
+                        removed = state.tickets.pop(target)
                         if removed.identifier:
                             state.ticket_ids.discard(removed.identifier)
                         else:
@@ -350,6 +351,33 @@ class ReleaseService:
                     thread_ts=thread_ts,
                 )
 
+            if action.category_changes:
+                for cat_change in action.category_changes:
+                    for idx in cat_change.indices:
+                        target = _nth_in_category(state.tickets, DEFAULT_CATEGORY, idx)
+                        if target is not None:
+                            state.tickets[target].category = cat_change.category
+                            changed = True
+                    for ticket in state.tickets:
+                        if ticket.identifier and ticket.identifier in cat_change.ticket_ids:
+                            ticket.category = cat_change.category
+                            changed = True
+                if changed:
+                    logger.info(
+                        "items_recategorized",
+                        changes=[
+                            {"indices": c.indices, "ticket_ids": sorted(c.ticket_ids), "category": c.category}
+                            for c in action.category_changes
+                        ],
+                        channel=channel,
+                        thread_ts=thread_ts,
+                    )
+
+            if action.is_hotfix is not None:
+                state.summary.is_hotfix = action.is_hotfix
+                changed = True
+                logger.info("hotfix_toggled", is_hotfix=action.is_hotfix)
+
             if action.new_release_date is not None:
                 state.summary.release_date_str = action.new_release_date
                 changed = True
@@ -386,6 +414,7 @@ class ReleaseService:
                 dev_eta=state.summary.dev_eta,
                 prod_eta=state.summary.prod_eta,
                 release_date_str=state.summary.release_date_str,
+                is_hotfix=state.summary.is_hotfix,
             )
             blocks = format_release_blocks(state.summary)
             fallback_text = format_release_summary(state.summary)
@@ -434,6 +463,19 @@ def _filter_by_status(tickets: list[TicketInfo], status: str) -> list[TicketInfo
     """Keep only tickets whose state matches the requested status (case-insensitive)."""
     normalized = status.lower()
     return [t for t in tickets if t.state and t.state.lower() == normalized]
+
+
+def _nth_in_category(
+    tickets: list[TicketInfo], category: str, n: int
+) -> int | None:
+    """Return the flat-list index of the Nth item (1-based) in *category*, or None."""
+    count = 0
+    for i, t in enumerate(tickets):
+        if t.category == category:
+            count += 1
+            if count == n:
+                return i
+    return None
 
 
 def _remove_plain_by_text(
