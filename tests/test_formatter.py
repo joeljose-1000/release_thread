@@ -196,6 +196,40 @@ class TestCategoryGrouping:
         assert "*HOTFIX <" in result
         assert "RELEASE" not in result
 
+    def test_hotfix_uses_items_heading(self) -> None:
+        summary = ReleaseSummary(
+            tickets=[
+                TicketInfo(identifier="ENG-1", title="Fix crash", url=""),
+                TicketInfo(identifier="ENG-2", title="New API", url="", category="Features"),
+            ],
+            pic="TBD",
+            is_hotfix=True,
+        )
+        result = format_release_summary(summary)
+        assert "*Items:*" in result
+        assert "*Features:*" not in result
+        assert "*Bugs and Improvements:*" not in result
+
+    def test_hotfix_single_list_blocks(self) -> None:
+        summary = ReleaseSummary(
+            tickets=[
+                TicketInfo(identifier="ENG-1", title="Fix crash", url=""),
+                TicketInfo(identifier="ENG-2", title="New API", url="", category="Features"),
+            ],
+            pic="TBD",
+            is_hotfix=True,
+        )
+        blocks = format_release_blocks(summary)
+        lists = [e for e in blocks[0]["elements"] if e["type"] == "rich_text_list"]
+        assert len(lists) == 1
+        assert len(lists[0]["elements"]) == 2
+
+    def test_hotfix_empty_shows_items_heading(self) -> None:
+        summary = ReleaseSummary(tickets=[], pic="TBD", is_hotfix=True)
+        result = format_release_summary(summary)
+        assert "*Items:*" in result
+        assert "*Bugs and Improvements:*" not in result
+
     def test_hotfix_header_blocks(self) -> None:
         summary = ReleaseSummary(tickets=[], pic="TBD", is_hotfix=True)
         blocks = format_release_blocks(summary)

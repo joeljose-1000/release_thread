@@ -66,17 +66,23 @@ def format_release_blocks(summary: ReleaseSummary) -> list[dict[str, Any]]:
     pic_els.extend(_mention_elements(summary.pic))
     parts.append({"type": "rich_text_section", "elements": pic_els})
 
+    if summary.is_hotfix:
+        groups = [("Items", summary.tickets)]
+    else:
+        groups = _group_by_category(summary.tickets)
+
     if not summary.tickets:
+        empty_heading = "Items" if summary.is_hotfix else "Bugs and Improvements"
         parts.append({
             "type": "rich_text_section",
-            "elements": [{"type": "text", "text": "Bugs and Improvements:", "style": {"bold": True}}],
+            "elements": [{"type": "text", "text": f"{empty_heading}:", "style": {"bold": True}}],
         })
         parts.append({
             "type": "rich_text_section",
             "elements": [{"type": "text", "text": "No tickets found.", "style": {"italic": True}}],
         })
     else:
-        for category, cat_tickets in _group_by_category(summary.tickets):
+        for category, cat_tickets in groups:
             parts.append({
                 "type": "rich_text_section",
                 "elements": [{"type": "text", "text": f"{category}:", "style": {"bold": True}}],
@@ -132,10 +138,15 @@ def format_release_summary(summary: ReleaseSummary) -> str:
     ]
 
     if not summary.tickets:
-        lines.append("*Bugs and Improvements:*")
+        empty_heading = "Items" if summary.is_hotfix else "Bugs and Improvements"
+        lines.append(f"*{empty_heading}:*")
         lines.append("_No tickets found._")
     else:
-        for category, cat_tickets in _group_by_category(summary.tickets):
+        if summary.is_hotfix:
+            groups = [("Items", summary.tickets)]
+        else:
+            groups = _group_by_category(summary.tickets)
+        for category, cat_tickets in groups:
             lines.append(f"*{category}:*")
             for idx, ticket in enumerate(cat_tickets, start=1):
                 assignee_part = ""
