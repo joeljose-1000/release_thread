@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from app.parsers.parser_utils import (
+    CATEGORY_HEADER_RE,
     PlainItem,
     _format_date,
     _format_date_short,
@@ -13,6 +14,7 @@ from app.parsers.parser_utils import (
     detect_status_filter,
     extract_plain_items,
     extract_ticket_ids,
+    resolve_header_category,
 )
 
 DEV_ETA_PATTERN = re.compile(r"dev\s+eta\b.{0,60}", re.IGNORECASE)
@@ -110,6 +112,7 @@ def _extract_eta_from_message(msg: str) -> tuple[str | None, str | None]:
 @dataclass
 class ParseResult:
     ticket_ids: set[str] = field(default_factory=set)
+    ticket_categories: dict[str, str] = field(default_factory=dict)
     plain_items: list[PlainItem] = field(default_factory=list)
     status_filter: str | None = None
     release_date: str | None = None
@@ -133,13 +136,17 @@ def extract_from_messages(
         result.is_hotfix = bool(metadata.get("is_hotfix"))
 
     for idx, msg in enumerate(messages):
-        result.ticket_ids.update(extract_ticket_ids(msg))
         if result.status_filter is None:
             result.status_filter = detect_status_filter(msg)
 
         sender = (user_ids[idx] if user_ids and idx < len(user_ids) else "")
-        for item_text in extract_plain_items(msg):
-            result.plain_items.append(PlainItem(title=item_text, user_id=sender))
+
+        if CATEGORY_HEADER_RE.search(msg):
+            _extract_categorized(msg, sender, result)
+        else:
+            result.ticket_ids.update(extract_ticket_ids(msg))
+            for item_text in extract_plain_items(msg):
+                result.plain_items.append(PlainItem(title=item_text, user_id=sender))
 
         if idx > 0:
             dev_eta, prod_eta = _extract_eta_from_message(msg)
@@ -149,3 +156,27 @@ def extract_from_messages(
                 result.prod_eta = prod_eta
 
     return result
+
+
+def _extract_categorized(msg: str, sender: str, result: ParseResult) -> None:
+    """Parse a message with category headers (Feature:, Fixes:, etc.) into *result*."""
+    from app.models.ticket import DEFAULT_CATEGORY
+
+    current_cat = DEFAULT_CATEGORY
+    for line in msg.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        header_match = CATEGORY_HEADER_RE.match(stripped)
+        if header_match:
+            current_cat = resolve_header_category(header_match.group(1))
+            continue
+        ids = extract_ticket_ids(stripped)
+        if ids:
+            result.ticket_ids.update(ids)
+            for tid in ids:
+                result.ticket_categories[tid] = current_cat
+        else:
+            result.plain_items.append(
+                PlainItem(title=stripped, user_id=sender, category=current_cat)
+            )

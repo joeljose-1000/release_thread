@@ -4,6 +4,7 @@ from app.parsers.parser_utils import (
     detect_status_filter,
     extract_plain_items,
     extract_ticket_ids,
+    release_date_from_eta,
 )
 
 
@@ -113,3 +114,30 @@ class TestExtractPlainItems:
         assert "fix for admin whitelist" in result
         assert "ats sync logs" in result
         assert "package upgrades" in result
+
+
+class TestReleaseDateFromEta:
+    def test_date_with_time(self) -> None:
+        result = release_date_from_eta("18th June 3pm")
+        assert result is not None
+        assert "18th June" in result
+        assert " - " in result  # day name appended
+
+    def test_date_with_tbd(self) -> None:
+        result = release_date_from_eta("18th June TBD")
+        assert result is not None
+        assert "18th June" in result
+
+    def test_date_only(self) -> None:
+        result = release_date_from_eta("20th June")
+        assert result is not None
+        assert "20th June" in result
+
+    def test_tbd_only(self) -> None:
+        assert release_date_from_eta("TBD") is None
+
+    def test_empty_string(self) -> None:
+        assert release_date_from_eta("") is None
+
+    def test_none_safe(self) -> None:
+        assert release_date_from_eta("") is None

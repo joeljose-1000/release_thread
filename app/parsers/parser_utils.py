@@ -221,8 +221,43 @@ def extract_plain_items(text: str) -> list[str]:
     return items
 
 
+def release_date_from_eta(eta: str) -> str | None:
+    """Derive a formatted release date from a prod ETA string.
+
+    Strips time and TBD portions, parses the remaining date, and returns
+    it in '18th June - Thursday' format.  Returns None if no date can
+    be extracted (e.g. eta is 'TBD').
+    """
+    if not eta or eta.strip().upper() == "TBD":
+        return None
+    clean = re.sub(r"\bTBD\b", "", eta, flags=re.IGNORECASE).strip()
+    clean = re.sub(r"\d{1,2}(?::\d{2})?\s*(?:am|pm)", "", clean, flags=re.IGNORECASE).strip()
+    if not clean:
+        return None
+    parsed = _parse_date(clean)
+    if parsed:
+        return _format_date(parsed.date())
+    return None
+
+
+CATEGORY_HEADER_RE = re.compile(
+    r"^\s*(features?|bugs?\s*(?:and\s+improvements?)?|fix(?:es)?|improvements?)\s*:\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_HEADER_FEATURES = {"feature", "features"}
+
+
+def resolve_header_category(header_text: str) -> str:
+    """Map a category header like 'Feature' or 'Fixes' to a canonical name."""
+    if header_text.strip().lower() in _HEADER_FEATURES:
+        return "Features"
+    return "Bugs and Improvements"
+
+
 @dataclass
 class PlainItem:
     """A release item described in plain text (no Linear ticket)."""
     title: str
     user_id: str = ""
+    category: str = "Bugs and Improvements"

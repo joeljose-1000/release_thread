@@ -277,7 +277,7 @@ Dev ETA : TBD
 Prod ETA : TBD
 ```
 
-Ticket titles are clickable Slack hyperlinks. Raw URLs are never visible. Each category has its own independent numbering. All items default to "Bugs and Improvements" and can be moved to other categories (e.g. Feature) via thread commands.
+Ticket titles are clickable Slack hyperlinks. Raw URLs are never visible. Each category has its own independent numbering. All items default to "Bugs and Improvements" and can be moved to other categories (e.g. Feature) via thread commands. The release/hotfix date in the header is always kept in sync with the Prod ETA date.
 
 ---
 
@@ -342,6 +342,31 @@ Same patterns as Dev ETA, using `prod eta` or `production eta`:
 |--------|---------|
 | Bulleted | `- Fix caching layer` |
 | Numbered | `1. Fix caching layer` |
+
+### Add Items with Category Headers
+
+You can post items under explicit category headers. The bot recognises `Feature:`, `Features:`, `Bug:`, `Fixes:`, `Improvements:`, and `Bugs and Improvements:` as headers and assigns items below them to the matching category. Items before any header default to "Bugs and Improvements".
+
+```
+Feature:
+Agent mode - candidate assistant
+
+Fixes:
+Questions changed for paused interview
+Candidate Assistant Issue
+```
+
+This also works with Linear URLs:
+
+```
+feature:
+https://linear.app/team/issue/WHA-2524/interview-reschedule
+
+bug:
+https://linear.app/team/issue/WHA-2564/proctoring-tab-missing
+```
+
+Category headers are supported both in the initial thread messages (parsed by `/release`) and in live thread replies.
 
 ### Categorize Items as Features
 

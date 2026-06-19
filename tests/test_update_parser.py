@@ -288,3 +288,44 @@ class TestParseUpdateMessage:
     def test_hotfix_does_not_create_category(self) -> None:
         action = parse_update_message("this is a hotfix")
         assert len(action.category_changes) == 0
+
+
+class TestCategoryHeaders:
+    def test_feature_header_with_ticket(self) -> None:
+        text = "feature:\nhttps://linear.app/co/issue/WHA-2524/reschedule\n\nbug:\nhttps://linear.app/co/issue/WHA-2564/proctoring"
+        action = parse_update_message(text)
+        assert "WHA-2524" in action.add_ticket_ids
+        assert "WHA-2564" in action.add_ticket_ids
+        assert action.add_ticket_categories["WHA-2524"] == "Features"
+        assert action.add_ticket_categories["WHA-2564"] == "Bugs and Improvements"
+
+    def test_feature_header_with_plain_items(self) -> None:
+        text = "Feature:\nAgent mode - candidate assistant\n\nFixes:\nLogin page bug\nSearch issue"
+        action = parse_update_message(text, user_id="U_A")
+        features = [i for i in action.add_plain_items if i.category == "Features"]
+        bugs = [i for i in action.add_plain_items if i.category == "Bugs and Improvements"]
+        assert len(features) == 1
+        assert features[0].title == "Agent mode - candidate assistant"
+        assert len(bugs) == 2
+
+    def test_no_header_requires_bullet_format(self) -> None:
+        action = parse_update_message("just a chat message", user_id="U_A")
+        assert not action.has_changes
+
+    def test_no_header_ticket_has_default_category(self) -> None:
+        action = parse_update_message("ENG-123")
+        assert action.add_ticket_categories["ENG-123"] == "Bugs and Improvements"
+
+    def test_fixes_header_maps_to_bugs_and_improvements(self) -> None:
+        text = "Fixes:\nSome bug fix"
+        action = parse_update_message(text, user_id="U_A")
+        assert action.add_plain_items[0].category == "Bugs and Improvements"
+
+    def test_mixed_headers_and_tickets(self) -> None:
+        text = "Feature:\nhttps://linear.app/co/issue/WHA-100/cool-feature\nNew dashboard\n\nBug:\nhttps://linear.app/co/issue/WHA-200/broken-login"
+        action = parse_update_message(text, user_id="U_B")
+        assert action.add_ticket_categories["WHA-100"] == "Features"
+        assert action.add_ticket_categories["WHA-200"] == "Bugs and Improvements"
+        features = [i for i in action.add_plain_items if i.category == "Features"]
+        assert len(features) == 1
+        assert features[0].title == "New dashboard"

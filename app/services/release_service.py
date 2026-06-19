@@ -9,7 +9,7 @@ from app.models.ticket import DEFAULT_CATEGORY, TicketInfo
 from app.ocr.base import OCRProvider
 from app.parsers.image_parser import extract_tickets_from_images
 from app.parsers.initial_parser import extract_from_messages
-from app.parsers.parser_utils import PlainItem
+from app.parsers.parser_utils import PlainItem, release_date_from_eta
 from app.parsers.update_parser import parse_update_message
 from app.services.pic_service import determine_pic
 from app.services.release_state import ReleaseState, ReleaseStateStore
@@ -161,6 +161,11 @@ class ReleaseService:
                     tickets = _filter_by_status(tickets, status_filter)
                     logger.info("status_filtered", status=status_filter, remaining=len(tickets))
 
+            for ticket in tickets:
+                cat = parse_result.ticket_categories.get(ticket.identifier)
+                if cat:
+                    ticket.category = cat
+
             plain_tickets = _build_plain_tickets(parse_result.plain_items)
             all_tickets = tickets + plain_tickets
 
@@ -184,12 +189,15 @@ class ReleaseService:
                 pic_name = pic[1:]
                 pic = self._resolve_assignee(pic_name, name_map)
 
+            prod_eta = parse_result.prod_eta or "TBD"
+            release_date_str = release_date_from_eta(prod_eta) or parse_result.release_date
+
             summary = ReleaseSummary(
                 tickets=all_tickets,
                 pic=pic,
                 dev_eta=parse_result.dev_eta or "TBD",
-                prod_eta=parse_result.prod_eta or "TBD",
-                release_date_str=parse_result.release_date,
+                prod_eta=prod_eta,
+                release_date_str=release_date_str,
                 is_hotfix=parse_result.is_hotfix,
             )
             blocks = format_release_blocks(summary)
@@ -314,6 +322,9 @@ class ReleaseService:
                         ticket.assignee_display = self._resolve_assignee(
                             ticket.assignee, state.name_map
                         )
+                        cat = action.add_ticket_categories.get(ticket.identifier)
+                        if cat:
+                            ticket.category = cat
                         state.tickets.append(ticket)
                         state.ticket_ids.add(ticket.identifier)
                     if new_tickets:
@@ -341,6 +352,7 @@ class ReleaseService:
                             title=item.title,
                             url="",
                             assignee_display=f"<@{item.user_id}>" if item.user_id else "",
+                            category=item.category,
                         )
                     )
                 changed = True
@@ -390,6 +402,9 @@ class ReleaseService:
 
             if action.new_prod_eta is not None:
                 state.summary.prod_eta = action.new_prod_eta
+                derived = release_date_from_eta(action.new_prod_eta)
+                if derived:
+                    state.summary.release_date_str = derived
                 changed = True
                 logger.info("prod_eta_updated", new_eta=action.new_prod_eta)
 
@@ -454,6 +469,7 @@ def _build_plain_tickets(plain_items: list[PlainItem]) -> list[TicketInfo]:
                 title=item.title,
                 url="",
                 assignee_display=f"<@{item.user_id}>" if item.user_id else "",
+                category=item.category,
             )
         )
     return tickets

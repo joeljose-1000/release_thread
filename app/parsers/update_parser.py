@@ -4,12 +4,14 @@ import re
 from dataclasses import dataclass, field
 
 from app.parsers.parser_utils import (
+    CATEGORY_HEADER_RE,
     PlainItem,
     _format_date,
     _resolve_date_from_text,
     _resolve_eta_text,
     extract_plain_items,
     extract_ticket_ids,
+    resolve_header_category,
 )
 
 REMOVAL_LINE_PATTERN = re.compile(
@@ -117,6 +119,7 @@ class UpdateAction:
     """Parsed add/remove actions from a single real-time thread message."""
 
     add_ticket_ids: set[str] = field(default_factory=set)
+    add_ticket_categories: dict[str, str] = field(default_factory=dict)
     remove_ticket_ids: set[str] = field(default_factory=set)
     add_plain_items: list[PlainItem] = field(default_factory=list)
     remove_texts: list[str] = field(default_factory=list)
@@ -156,10 +159,17 @@ def parse_update_message(text: str, user_id: str = "") -> UpdateAction:
       3. Additions — ticket IDs and bulleted/numbered plain items.
     """
     action = UpdateAction()
+    has_headers = bool(CATEGORY_HEADER_RE.search(text))
+    current_category = "Bugs and Improvements"
 
     for line in text.split("\n"):
         line = line.strip()
         if not line:
+            continue
+
+        header_match = CATEGORY_HEADER_RE.match(line)
+        if header_match:
+            current_category = resolve_header_category(header_match.group(1))
             continue
 
         if HOTFIX_PATTERN.search(line):
@@ -234,11 +244,18 @@ def parse_update_message(text: str, user_id: str = "") -> UpdateAction:
 
         ids = extract_ticket_ids(line)
         action.add_ticket_ids.update(ids)
+        for tid in ids:
+            action.add_ticket_categories[tid] = current_category
 
         if not ids:
-            for item_text in extract_plain_items(line):
+            if has_headers:
                 action.add_plain_items.append(
-                    PlainItem(title=item_text, user_id=user_id)
+                    PlainItem(title=line, user_id=user_id, category=current_category)
                 )
+            else:
+                for item_text in extract_plain_items(line):
+                    action.add_plain_items.append(
+                        PlainItem(title=item_text, user_id=user_id, category=current_category)
+                    )
 
     return action

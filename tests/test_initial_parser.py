@@ -85,6 +85,75 @@ class TestReleaseDateNextThis:
         assert "Thursday" in result.release_date
 
 
+class TestCategoryHeaderParsing:
+    def test_feature_and_fixes_headers(self) -> None:
+        messages = [
+            "Feature:\nAgent mode - candidate assistant\n\nFixes:\nQuestions changed for paused interview\nCandidate Assistant Issue"
+        ]
+        result = extract_from_messages(messages, user_ids=["U_SHAROOQ"])
+        assert len(result.plain_items) == 3
+        assert result.plain_items[0].title == "Agent mode - candidate assistant"
+        assert result.plain_items[0].category == "Features"
+        assert result.plain_items[1].category == "Bugs and Improvements"
+        assert result.plain_items[2].category == "Bugs and Improvements"
+
+    def test_feature_and_bug_with_ticket_urls(self) -> None:
+        messages = [
+            "feature:\nhttps://linear.app/co/issue/WHA-2524/interview-reschedule\n\nbug:\nhttps://linear.app/co/issue/WHA-2564/proctoring-tab-missing"
+        ]
+        result = extract_from_messages(messages, user_ids=["U_ALEX"])
+        assert "WHA-2524" in result.ticket_ids
+        assert "WHA-2564" in result.ticket_ids
+        assert result.ticket_categories.get("WHA-2524") == "Features"
+        assert result.ticket_categories.get("WHA-2564") == "Bugs and Improvements"
+
+    def test_mixed_messages_with_and_without_headers(self) -> None:
+        messages = [
+            "https://linear.app/co/issue/WHA-2609/role-sync-failure",
+            "Feature:\nAgent mode - candidate assistant\n\nFixes:\nQuestions changed",
+            "https://linear.app/co/issue/WHA-2541/bug-duration",
+        ]
+        result = extract_from_messages(
+            messages, user_ids=["U_JOEL", "U_SHAROOQ", "U_JOEL2"]
+        )
+        assert "WHA-2609" in result.ticket_ids
+        assert "WHA-2541" in result.ticket_ids
+        assert "WHA-2609" not in result.ticket_categories
+        assert result.plain_items[0].title == "Agent mode - candidate assistant"
+        assert result.plain_items[0].category == "Features"
+        assert result.plain_items[1].title == "Questions changed"
+        assert result.plain_items[1].category == "Bugs and Improvements"
+
+    def test_no_headers_uses_standard_extraction(self) -> None:
+        messages = ["1. Fix admin whitelist\n2. ATS sync logs"]
+        result = extract_from_messages(messages, user_ids=["U_BOB"])
+        assert len(result.plain_items) == 2
+        assert result.plain_items[0].category == "Bugs and Improvements"
+        assert result.plain_items[1].category == "Bugs and Improvements"
+
+    def test_improvements_header(self) -> None:
+        messages = ["Improvements:\nFaster search indexing"]
+        result = extract_from_messages(messages, user_ids=["U_A"])
+        assert result.plain_items[0].category == "Bugs and Improvements"
+
+    def test_bugs_and_improvements_header(self) -> None:
+        messages = ["Bugs and Improvements:\nLogin page fix"]
+        result = extract_from_messages(messages, user_ids=["U_A"])
+        assert result.plain_items[0].category == "Bugs and Improvements"
+
+    def test_features_header_plural(self) -> None:
+        messages = ["Features:\nNew dashboard"]
+        result = extract_from_messages(messages, user_ids=["U_A"])
+        assert result.plain_items[0].category == "Features"
+
+    def test_user_id_carried_through(self) -> None:
+        messages = [
+            "Feature:\nNew feature item",
+        ]
+        result = extract_from_messages(messages, user_ids=["U_SHAROOQ"])
+        assert result.plain_items[0].user_id == "U_SHAROOQ"
+
+
 class TestHotfixDetection:
     def test_hotfix_in_header(self) -> None:
         messages = ["hotfix items for Thursday"]
