@@ -19,6 +19,12 @@ PLAIN_ITEM_PATTERN = re.compile(
     re.MULTILINE,
 )
 
+INLINE_ASSIGNEE_RE = re.compile(r"\s+-\s+(?:@(.+?)|<@(\w+)>)\s*[.,;]?\s*$")
+
+GITHUB_PR_URL_PATTERN = re.compile(
+    r"https?://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)",
+)
+
 STATUS_FILTER_PATTERN = re.compile(
     r"\b(?:all\s+(?:items?|tickets?|issues?)\s+(?:in|with)\s+(\w+)(?:\s+status)?)\b",
     re.IGNORECASE,
@@ -195,6 +201,19 @@ def _resolve_eta_text(text: str) -> str | None:
 # Extraction helpers (tickets, plain items, status)
 # ---------------------------------------------------------------------------
 
+def extract_inline_assignee(line: str) -> str | None:
+    """Return the inline assignee at the end of a line (after ``- ``).
+
+    Returns ``<@U123>`` for Slack mentions or a plain name for literal ``@name``.
+    """
+    m = INLINE_ASSIGNEE_RE.search(line)
+    if not m:
+        return None
+    if m.group(2):
+        return f"<@{m.group(2)}>"
+    return m.group(1).strip(".")
+
+
 def extract_ticket_ids(text: str) -> set[str]:
     """Extract Linear ticket identifiers from plain text and URLs."""
     ids: set[str] = set()
@@ -261,3 +280,5 @@ class PlainItem:
     title: str
     user_id: str = ""
     category: str = "Bugs and Improvements"
+    assignee_name: str = ""
+    url: str = ""

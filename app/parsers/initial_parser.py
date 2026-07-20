@@ -6,12 +6,14 @@ from datetime import date
 
 from app.parsers.parser_utils import (
     CATEGORY_HEADER_RE,
+    GITHUB_PR_URL_PATTERN,
     PlainItem,
     _format_date,
     _format_date_short,
     _resolve_date_from_text,
     _resolve_eta_text,
     detect_status_filter,
+    extract_inline_assignee,
     extract_plain_items,
     extract_ticket_ids,
     resolve_header_category,
@@ -113,6 +115,7 @@ def _extract_eta_from_message(msg: str) -> tuple[str | None, str | None]:
 class ParseResult:
     ticket_ids: set[str] = field(default_factory=set)
     ticket_categories: dict[str, str] = field(default_factory=dict)
+    ticket_assignee_overrides: dict[str, str] = field(default_factory=dict)
     plain_items: list[PlainItem] = field(default_factory=list)
     status_filter: str | None = None
     release_date: str | None = None
@@ -144,9 +147,7 @@ def extract_from_messages(
         if CATEGORY_HEADER_RE.search(msg):
             _extract_categorized(msg, sender, result)
         else:
-            result.ticket_ids.update(extract_ticket_ids(msg))
-            for item_text in extract_plain_items(msg):
-                result.plain_items.append(PlainItem(title=item_text, user_id=sender))
+            _extract_flat(msg, sender, result)
 
         if idx > 0:
             dev_eta, prod_eta = _extract_eta_from_message(msg)
@@ -156,6 +157,57 @@ def extract_from_messages(
                 result.prod_eta = prod_eta
 
     return result
+
+
+def _process_line(
+    line: str, sender: str, result: ParseResult, category: str | None = None,
+) -> None:
+    """Process a single line for ticket IDs, GitHub PRs, and inline assignees."""
+    inline_name = extract_inline_assignee(line)
+
+    ids = extract_ticket_ids(line)
+    if ids:
+        result.ticket_ids.update(ids)
+        if category:
+            for tid in ids:
+                result.ticket_categories[tid] = category
+        if inline_name:
+            for tid in ids:
+                result.ticket_assignee_overrides[tid] = inline_name
+        return
+
+    gh_match = GITHUB_PR_URL_PATTERN.search(line)
+    if gh_match:
+        repo, pr_num = gh_match.group(1), gh_match.group(2)
+        result.plain_items.append(
+            PlainItem(
+                title=f"{repo}#{pr_num}",
+                user_id=sender,
+                category=category or "Bugs and Improvements",
+                assignee_name=inline_name or "",
+                url=gh_match.group(0),
+            )
+        )
+        return
+
+    for item_text in extract_plain_items(line):
+        result.plain_items.append(
+            PlainItem(
+                title=item_text,
+                user_id=sender,
+                category=category or "Bugs and Improvements",
+                assignee_name=inline_name or "",
+            )
+        )
+
+
+def _extract_flat(msg: str, sender: str, result: ParseResult) -> None:
+    """Extract tickets and plain items from a message without category headers."""
+    for line in msg.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        _process_line(stripped, sender, result)
 
 
 def _extract_categorized(msg: str, sender: str, result: ParseResult) -> None:
@@ -171,12 +223,4 @@ def _extract_categorized(msg: str, sender: str, result: ParseResult) -> None:
         if header_match:
             current_cat = resolve_header_category(header_match.group(1))
             continue
-        ids = extract_ticket_ids(stripped)
-        if ids:
-            result.ticket_ids.update(ids)
-            for tid in ids:
-                result.ticket_categories[tid] = current_cat
-        else:
-            result.plain_items.append(
-                PlainItem(title=stripped, user_id=sender, category=current_cat)
-            )
+        _process_line(stripped, sender, result, category=current_cat)

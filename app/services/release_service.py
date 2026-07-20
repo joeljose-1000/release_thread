@@ -216,12 +216,18 @@ class ReleaseService:
             team_map = await self._build_team_member_map(client)
             merged_map = {**team_map, **thread_map}
 
+            overrides = parse_result.ticket_assignee_overrides
             for ticket in all_tickets:
                 if ticket.assignee_display and ticket.assignee_display.startswith("<@"):
                     continue
-                resolved = self._resolve_assignee(ticket.assignee, thread_map)
+                override = overrides.get(ticket.identifier)
+                if override and override.startswith("<@"):
+                    ticket.assignee_display = override
+                    continue
+                name = override or ticket.assignee
+                resolved = self._resolve_assignee(name, thread_map)
                 if not resolved.startswith("<@"):
-                    resolved = self._resolve_assignee(ticket.assignee, team_map)
+                    resolved = self._resolve_assignee(name, team_map)
                 ticket.assignee_display = resolved
 
             pic = determine_pic(all_tickets)
@@ -361,9 +367,14 @@ class ReleaseService:
                         new_linear_ids, include_state=False
                     )
                     for ticket in new_tickets:
-                        ticket.assignee_display = self._resolve_assignee(
-                            ticket.assignee, state.name_map
-                        )
+                        override = action.add_ticket_assignee_overrides.get(ticket.identifier)
+                        if override and override.startswith("<@"):
+                            ticket.assignee_display = override
+                        else:
+                            name = override or ticket.assignee
+                            ticket.assignee_display = self._resolve_assignee(
+                                name, state.name_map
+                            )
                         cat = action.add_ticket_categories.get(ticket.identifier)
                         if cat:
                             ticket.category = cat
@@ -388,12 +399,20 @@ class ReleaseService:
             if new_plain:
                 for item in new_plain:
                     state.plain_titles.add(item.title.lower().strip())
+                    if item.assignee_name and item.assignee_name.startswith("<@"):
+                        display = item.assignee_name
+                    elif item.assignee_name:
+                        display = self._resolve_assignee(item.assignee_name, state.name_map)
+                    elif item.user_id:
+                        display = f"<@{item.user_id}>"
+                    else:
+                        display = ""
                     state.tickets.append(
                         TicketInfo(
                             identifier="",
                             title=item.title,
-                            url="",
-                            assignee_display=f"<@{item.user_id}>" if item.user_id else "",
+                            url=item.url,
+                            assignee_display=display,
                             category=item.category,
                         )
                     )
@@ -505,12 +524,25 @@ def _build_plain_tickets(plain_items: list[PlainItem]) -> list[TicketInfo]:
         if key in seen_titles:
             continue
         seen_titles.add(key)
+        if item.assignee_name and item.assignee_name.startswith("<@"):
+            assignee_display = item.assignee_name
+            assignee_raw = None
+        elif item.assignee_name:
+            assignee_display = f"@{item.assignee_name}"
+            assignee_raw = item.assignee_name
+        elif item.user_id:
+            assignee_display = f"<@{item.user_id}>"
+            assignee_raw = None
+        else:
+            assignee_display = ""
+            assignee_raw = None
         tickets.append(
             TicketInfo(
                 identifier="",
                 title=item.title,
-                url="",
-                assignee_display=f"<@{item.user_id}>" if item.user_id else "",
+                url=item.url,
+                assignee=assignee_raw,
+                assignee_display=assignee_display,
                 category=item.category,
             )
         )

@@ -337,6 +337,18 @@ Same patterns as Dev ETA, using `prod eta` or `production eta`:
 | Multiple IDs | `ENG-123 and PLAT-456` |
 | Linear URL | `https://linear.app/team/issue/ENG-789/fix-something` |
 
+### Inline Assignee Overrides
+
+Append `- @name` to a ticket or URL line to override the Linear/sender assignee:
+
+| Format | Example |
+|--------|---------|
+| Linear URL with assignee | `- https://linear.app/.../ENG-789/fix-something - @kartheek` |
+| Ticket ID with assignee | `- ENG-789 - @javad` |
+| GitHub PR with assignee | `- https://github.com/org/repo/pull/123 - @joel` |
+
+GitHub PR URLs are treated as plain-text items. The `@name` is resolved against Slack thread participants and `TEAM_MEMBERS` using the same fuzzy matching as Linear assignees.
+
 ### Add Plain Items
 
 | Format | Example |
