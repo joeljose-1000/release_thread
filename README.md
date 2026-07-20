@@ -197,6 +197,7 @@ The API key inherits your user permissions. Ensure you have read access to the t
 | `PORT` | No | `3000` | Server port |
 | `LOG_LEVEL` | No | `INFO` | Logging level |
 | `FALLBACK_MESSAGE_COUNT` | No | `20` | Messages to scan outside a thread |
+| `TEAM_MEMBERS` | No | `""` | Comma-separated team member names for assignee matching (e.g. `Joel Jose,Sharooq Farzeen A K`) |
 
 ---
 

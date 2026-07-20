@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import cached_property
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -44,6 +46,19 @@ class Settings(BaseSettings):
         ge=1,
         description="Messages to scan when /release is used outside a thread",
     )
+
+    # Team
+    team_members_raw: str = Field(
+        default="",
+        alias="TEAM_MEMBERS",
+        description="Comma-separated team member names for assignee matching",
+    )
+
+    @cached_property
+    def team_members(self) -> list[str]:
+        if not self.team_members_raw:
+            return []
+        return [name.strip() for name in self.team_members_raw.split(",") if name.strip()]
 
     # Concurrency
     linear_max_concurrency: int = Field(

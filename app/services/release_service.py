@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.config.settings import Settings
@@ -45,12 +46,17 @@ class ReleaseService:
             return await fetch_thread_messages(client, channel, thread_ts)
         return await fetch_recent_messages(client, channel, self._settings.fallback_message_count)
 
-    async def _build_name_to_slack_id_map(self, client: Any) -> dict[str, str]:
-        """Build a mapping from display names / real names to Slack user IDs.
+    async def _build_team_member_map(self, client: Any) -> dict[str, str]:
+        """Build a name→Slack-ID map filtered to configured TEAM_MEMBERS.
 
-        Keys are lowercased. Multiple keys point to the same user ID so that
-        matching by first name, full name, or display name all work.
+        Scans the Slack workspace user list but only includes users whose
+        real_name or display_name matches a name in ``self._settings.team_members``
+        (case-insensitive).
         """
+        allowed = {n.lower() for n in self._settings.team_members}
+        if not allowed:
+            return {}
+
         name_map: dict[str, str] = {}
         try:
             cursor = None
@@ -67,7 +73,9 @@ class ReleaseService:
                     real_name = (profile.get("real_name") or "").strip()
                     display_name = (profile.get("display_name") or "").strip()
                     first_name = (profile.get("first_name") or "").strip()
-                    email = (profile.get("email") or "").strip()
+
+                    if real_name.lower() not in allowed and display_name.lower() not in allowed:
+                        continue
 
                     if display_name:
                         name_map[display_name.lower()] = uid
@@ -75,10 +83,6 @@ class ReleaseService:
                         name_map[real_name.lower()] = uid
                     if first_name:
                         name_map[first_name.lower()] = uid
-                    if email:
-                        # Map the local part of the email (before @)
-                        local = email.split("@")[0].lower()
-                        name_map[local] = uid
 
                 cursor = resp.get("response_metadata", {}).get("next_cursor")
                 if not cursor:
@@ -86,27 +90,58 @@ class ReleaseService:
         except Exception:
             logger.exception("failed_to_fetch_slack_users")
 
-        logger.info("slack_user_map_built", user_count=len(name_map))
+        logger.info("team_member_map_built", user_count=len(name_map))
         return name_map
+
+    async def _build_thread_participant_map(
+        self, client: Any, user_ids: list[str]
+    ) -> dict[str, str]:
+        """Build a name→Slack-ID map from thread participants via users.info."""
+        name_map: dict[str, str] = {}
+        seen: set[str] = set()
+        for uid in user_ids:
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            try:
+                resp = await client.users_info(user=uid)
+                user = resp.get("user", {})
+                if user.get("is_bot") or user.get("deleted"):
+                    continue
+                profile = user.get("profile", {})
+                for key in ("real_name", "display_name", "first_name"):
+                    val = (profile.get(key) or "").strip()
+                    if val:
+                        name_map[val.lower()] = uid
+            except Exception:
+                logger.warning("thread_participant_lookup_failed", user_id=uid)
+        return name_map
+
+    @staticmethod
+    def _normalize(name: str) -> str:
+        """Normalize separators so ``joel.jose`` becomes ``joel jose``."""
+        return re.sub(r"[.\-_]+", " ", name)
 
     def _resolve_assignee(self, assignee_name: str | None, name_map: dict[str, str]) -> str:
         """Convert a Linear assignee name to a Slack <@U123> mention if possible."""
         if not assignee_name:
             return ""
         lookup = assignee_name.strip().lower()
+        normalized = self._normalize(lookup)
 
-        # Try exact match on full name
         slack_id = name_map.get(lookup)
 
-        # Try first name only
-        if not slack_id:
-            first = lookup.split()[0] if lookup.split() else lookup
-            slack_id = name_map.get(first)
+        if not slack_id and normalized != lookup:
+            slack_id = name_map.get(normalized)
 
-        # Try matching as substring (e.g. Linear has "sharooq" and Slack has "sharooq farzeen a k")
+        if not slack_id:
+            parts = normalized.split()
+            if parts:
+                slack_id = name_map.get(parts[0])
+
         if not slack_id:
             for key, uid in name_map.items():
-                if lookup in key or key.startswith(lookup):
+                if normalized in key or key.startswith(normalized):
                     slack_id = uid
                     break
 
@@ -177,17 +212,24 @@ class ReleaseService:
                 )
                 return
 
-            name_map = await self._build_name_to_slack_id_map(client)
+            thread_map = await self._build_thread_participant_map(client, user_ids)
+            team_map = await self._build_team_member_map(client)
+            merged_map = {**team_map, **thread_map}
 
             for ticket in all_tickets:
                 if ticket.assignee_display and ticket.assignee_display.startswith("<@"):
                     continue
-                ticket.assignee_display = self._resolve_assignee(ticket.assignee, name_map)
+                resolved = self._resolve_assignee(ticket.assignee, thread_map)
+                if not resolved.startswith("<@"):
+                    resolved = self._resolve_assignee(ticket.assignee, team_map)
+                ticket.assignee_display = resolved
 
             pic = determine_pic(all_tickets)
             if pic.startswith("@"):
                 pic_name = pic[1:]
-                pic = self._resolve_assignee(pic_name, name_map)
+                pic = self._resolve_assignee(pic_name, thread_map)
+                if not pic.startswith("<@"):
+                    pic = self._resolve_assignee(pic_name, team_map)
 
             prod_eta = parse_result.prod_eta or "TBD"
             release_date_str = release_date_from_eta(prod_eta) or parse_result.release_date
@@ -220,7 +262,7 @@ class ReleaseService:
                         message_ts=message_ts,
                         tickets=list(all_tickets),
                         summary=summary,
-                        name_map=name_map,
+                        name_map=merged_map,
                         ticket_ids={t.identifier for t in all_tickets if t.identifier},
                         plain_titles={t.title.lower().strip() for t in all_tickets if not t.identifier},
                     )
