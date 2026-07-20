@@ -5,10 +5,12 @@ from dataclasses import dataclass, field
 
 from app.parsers.parser_utils import (
     CATEGORY_HEADER_RE,
+    GITHUB_PR_URL_PATTERN,
     PlainItem,
     _format_date,
     _resolve_date_from_text,
     _resolve_eta_text,
+    extract_inline_assignee,
     extract_plain_items,
     extract_ticket_ids,
     resolve_header_category,
@@ -120,6 +122,7 @@ class UpdateAction:
 
     add_ticket_ids: set[str] = field(default_factory=set)
     add_ticket_categories: dict[str, str] = field(default_factory=dict)
+    add_ticket_assignee_overrides: dict[str, str] = field(default_factory=dict)
     remove_ticket_ids: set[str] = field(default_factory=set)
     add_plain_items: list[PlainItem] = field(default_factory=list)
     remove_texts: list[str] = field(default_factory=list)
@@ -242,20 +245,37 @@ def parse_update_message(text: str, user_id: str = "") -> UpdateAction:
                         action.remove_texts.append(cleaned)
             continue
 
+        inline_name = extract_inline_assignee(line)
+
         ids = extract_ticket_ids(line)
         action.add_ticket_ids.update(ids)
         for tid in ids:
             action.add_ticket_categories[tid] = current_category
+        if ids and inline_name:
+            for tid in ids:
+                action.add_ticket_assignee_overrides[tid] = inline_name
 
         if not ids:
-            if has_headers:
+            gh_match = GITHUB_PR_URL_PATTERN.search(line)
+            if gh_match:
+                repo, pr_num = gh_match.group(1), gh_match.group(2)
                 action.add_plain_items.append(
-                    PlainItem(title=line, user_id=user_id, category=current_category)
+                    PlainItem(
+                        title=f"{repo}#{pr_num}",
+                        user_id=user_id,
+                        category=current_category,
+                        assignee_name=inline_name or "",
+                        url=gh_match.group(0),
+                    )
+                )
+            elif has_headers:
+                action.add_plain_items.append(
+                    PlainItem(title=line, user_id=user_id, category=current_category, assignee_name=inline_name or "")
                 )
             else:
                 for item_text in extract_plain_items(line):
                     action.add_plain_items.append(
-                        PlainItem(title=item_text, user_id=user_id, category=current_category)
+                        PlainItem(title=item_text, user_id=user_id, category=current_category, assignee_name=inline_name or "")
                     )
 
     return action
